@@ -1,4 +1,7 @@
 # 🎥 ASCII-Cam
+
+**Language:** [한국어](README.md) | [English](README.eng.md)
+
 > **Windows Media Foundation 기반의 경량 가상 웹캠 아스키 아트 필터**
 
 `ASCII-Cam Flow`는 노트북의 실제 웹캠 영상을 실시간으로 분석하여 아스키 아트(ASCII Art) 이미지로 변환하고, 이를 시스템 가상 카메라 장치로 송출하는 프로젝트입니다. **Media Foundation** 표준을 사용하여 최신 Windows 환경에서 높은 호환성과 성능을 유지합니다.
