@@ -31,33 +31,26 @@ cv::Mat AsciiEngine::Process(const cv::Mat& frame) {
     if (frame.empty()) return cv::Mat();
 
     cv::Mat gray, small;
-    // 1. 연산량 감소를 위해 흑백 변환
     cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
 
-    // 2. 문자 개수에 맞춰 해상도 다운샘플링
     int cols = frame.cols / m_charWidth;
     int rows = frame.rows / m_charHeight;
     cv::resize(gray, small, cv::Size(cols, rows), 0, 0, cv::INTER_AREA);
 
-    // 3. 최종 출력용 검은색 캔버스 준비
     cv::Mat asciiFrame = cv::Mat::zeros(frame.size(), CV_8UC1);
 
-    // 4. 각 픽셀 밝기 값을 미리 생성된 문자 비트맵으로 매핑
-    for (int y = 0; y < rows; ++y) {
-        // 포인터를 사용하여 로우 단위 접근 (at()보다 빠름)
-        uint8_t* rowPtr = small.ptr<uint8_t>(y);
+    cv::parallel_for_(cv::Range(0, rows), [&](const cv::Range& range) {
+        for (int y = range.start; y < range.end; ++y) {
+            uint8_t* rowPtr = small.ptr<uint8_t>(y);
+            for (int x = 0; x < cols; ++x) {
+                uint8_t brightness = rowPtr[x];
+                int idx = brightness * (static_cast<int>(m_charset.length()) - 1) / 255;
 
-        for (int x = 0; x < cols; ++x) {
-            uint8_t brightness = rowPtr[x];
-
-            // 밝기(0~255)를 charset 인덱스로 변환
-            int idx = brightness * (static_cast<int>(m_charset.length()) - 1) / 255;
-
-            // 캐싱된 문자 비트맵을 결과 프레임에 복사 (BitBlt 방식)
-            cv::Rect roi(x * m_charWidth, y * m_charHeight, m_charWidth, m_charHeight);
-            m_charCache[idx].copyTo(asciiFrame(roi));
+                cv::Rect roi(x * m_charWidth, y * m_charHeight, m_charWidth, m_charHeight);
+                m_charCache[idx].copyTo(asciiFrame(roi));
+            }
         }
-    }
+    });
 
     return asciiFrame;
 }
