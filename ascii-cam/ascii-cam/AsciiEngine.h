@@ -13,7 +13,7 @@ public:
     ~AsciiEngine() = default;
 
     // 원본 프레임을 아스키 비트맵 프레임으로 변환
-    cv::Mat Process(const cv::Mat& frame);
+    cv::Mat Process(const cv::Mat& frame) const;
 
     // 문자 세트 변경 (어두운 -> 밝은 순서)
     void SetCharset(const std::string& newCharset);

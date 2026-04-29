@@ -27,7 +27,7 @@ void AsciiEngine::BuildCharCache() {
     }
 }
 
-cv::Mat AsciiEngine::Process(const cv::Mat& frame) {
+cv::Mat AsciiEngine::Process(const cv::Mat& frame) const {
     if (frame.empty()) return cv::Mat();
 
     cv::Mat gray, small;
