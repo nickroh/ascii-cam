@@ -134,16 +134,24 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="ClassFactory.cpp" />
+    <ClCompile Include="CLSID.cpp" />
+    <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="FrameEngine.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="AsciiEngine.cpp" />
+    <ClCompile Include="MediaSource.cpp" />
     <ClCompile Include="MediaStream.cpp" />
+    <ClCompile Include="Register.cpp" />
     <ClCompile Include="SharedMemory.cpp" />
     <ClCompile Include="VirtualCam.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="AsciiEngine.h" />
+    <ClInclude Include="ClassFactory.h" />
+    <ClInclude Include="CLSID.h" />
     <ClInclude Include="FrameEngine.h" />
+    <ClInclude Include="MediaSource.h" />
     <ClInclude Include="MediaStream.h" />
     <ClInclude Include="SharedMemory.h" />
     <ClInclude Include="VirtualCam.h" />

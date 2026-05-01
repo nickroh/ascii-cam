@@ -1,126 +1,65 @@
 ﻿#include "MediaStream.h"
+#include "MediaSource.h"
 #include <mfapi.h>
-#include <mferror.h>
-#include <iostream>
 
-MyMediaStream::MyMediaStream(MyMediaSource* source)
-    : m_refCount(1), m_source(source), m_streamDesc(nullptr), m_eventQueue(nullptr)
+MyMediaStream::MyMediaStream(MyMediaSource* src)
+    : m_ref(1), m_source(src), m_queue(nullptr)
 {
-    MFCreateEventQueue(&m_eventQueue);
+    MFCreateEventQueue(&m_queue);
 }
 
-MyMediaStream::~MyMediaStream()
-{
-    if (m_eventQueue) m_eventQueue->Release();
-    if (m_streamDesc) m_streamDesc->Release();
+MyMediaStream::~MyMediaStream() {
+    if (m_queue) m_queue->Release();
 }
 
-//////////////////////////////////////////////////////////////
+void MyMediaStream::QueueSample(IMFSample* sample)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    sample->AddRef();
+    m_samples.push(sample);
+}
+
+HRESULT MyMediaStream::RequestSample(IUnknown*)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    if (m_samples.empty()) return S_OK;
+
+    IMFSample* s = m_samples.front();
+    m_samples.pop();
+
+    return m_queue->QueueEventParamUnk(MEMediaSample, GUID_NULL, S_OK, s);
+}
+
+HRESULT MyMediaStream::GetMediaSource(IMFMediaSource** pp)
+{
+    *pp = (IMFMediaSource*)m_source;
+    m_source->AddRef();
+    return S_OK;
+}
+
+// Event passthrough
+HRESULT MyMediaStream::BeginGetEvent(IMFAsyncCallback* c, IUnknown* s) { return m_queue->BeginGetEvent(c, s); }
+HRESULT MyMediaStream::EndGetEvent(IMFAsyncResult* r, IMFMediaEvent** e) { return m_queue->EndGetEvent(r, e); }
+HRESULT MyMediaStream::GetEvent(DWORD f, IMFMediaEvent** e) { return m_queue->GetEvent(f, e); }
+HRESULT MyMediaStream::QueueEvent(MediaEventType t, REFGUID g, HRESULT h, const PROPVARIANT* v) {
+    return m_queue->QueueEventParamVar(t, g, h, v);
+}
+
 // IUnknown
-//////////////////////////////////////////////////////////////
-
-ULONG MyMediaStream::AddRef()
-{
-    return InterlockedIncrement(&m_refCount);
+ULONG MyMediaStream::AddRef() { return InterlockedIncrement(&m_ref); }
+ULONG MyMediaStream::Release() {
+    ULONG c = InterlockedDecrement(&m_ref);
+    if (!c) delete this;
+    return c;
 }
-
-ULONG MyMediaStream::Release()
-{
-    ULONG count = InterlockedDecrement(&m_refCount);
-    if (count == 0) delete this;
-    return count;
-}
-
 HRESULT MyMediaStream::QueryInterface(REFIID riid, void** ppv)
 {
-    if (riid == IID_IUnknown || riid == IID_IMFMediaStream || riid == IID_IMFMediaEventGenerator)
-    {
-        *ppv = static_cast<IMFMediaStream*>(this);
+    if (riid == IID_IUnknown || riid == IID_IMFMediaStream || riid == IID_IMFMediaEventGenerator) {
+        *ppv = this;
         AddRef();
         return S_OK;
     }
     *ppv = nullptr;
     return E_NOINTERFACE;
-}
-
-//////////////////////////////////////////////////////////////
-// IMFMediaEventGenerator
-//////////////////////////////////////////////////////////////
-
-HRESULT MyMediaStream::BeginGetEvent(IMFAsyncCallback* pCallback, IUnknown* punkState)
-{
-    return m_eventQueue->BeginGetEvent(pCallback, punkState);
-}
-
-HRESULT MyMediaStream::EndGetEvent(IMFAsyncResult* pResult, IMFMediaEvent** ppEvent)
-{
-    return m_eventQueue->EndGetEvent(pResult, ppEvent);
-}
-
-HRESULT MyMediaStream::GetEvent(DWORD dwFlags, IMFMediaEvent** ppEvent)
-{
-    return m_eventQueue->GetEvent(dwFlags, ppEvent);
-}
-
-HRESULT MyMediaStream::QueueEvent(MediaEventType met, REFGUID guidExtendedType,
-    HRESULT hrStatus, const PROPVARIANT* pvValue)
-{
-    return m_eventQueue->QueueEventParamVar(met, guidExtendedType, hrStatus, pvValue);
-}
-
-//////////////////////////////////////////////////////////////
-// IMFMediaStream
-//////////////////////////////////////////////////////////////
-
-HRESULT MyMediaStream::GetMediaSource(IMFMediaSource** ppMediaSource)
-{
-    *ppMediaSource = (IMFMediaSource*)m_source;
-    if (m_source) m_source->AddRef();
-    return S_OK;
-}
-
-HRESULT MyMediaStream::GetStreamDescriptor(IMFStreamDescriptor** ppStreamDescriptor)
-{
-    if (!m_streamDesc) return E_FAIL;
-
-    *ppStreamDescriptor = m_streamDesc;
-    m_streamDesc->AddRef();
-    return S_OK;
-}
-
-HRESULT MyMediaStream::RequestSample(IUnknown* pToken)
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    if (m_sampleQueue.empty())
-    {
-        // 아직 샘플 없음 → 기다림
-        return S_OK;
-    }
-
-    IMFSample* sample = m_sampleQueue.front();
-    m_sampleQueue.pop();
-
-    // 🔥 핵심: 샘플 전달 이벤트
-    return m_eventQueue->QueueEventParamUnk(
-        MEMediaSample,
-        GUID_NULL,
-        S_OK,
-        sample
-    );
-}
-
-//////////////////////////////////////////////////////////////
-// 🔥 우리가 만든 핵심 함수
-//////////////////////////////////////////////////////////////
-
-void MyMediaStream::QueueSample(IMFSample* sample)
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    if (sample)
-    {
-        sample->AddRef();
-        m_sampleQueue.push(sample);
-    }
 }

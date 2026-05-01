@@ -1,6 +1,8 @@
 ﻿#include "VirtualCam.h"
 #include <iostream>
 #include <combaseapi.h> // CoInitializeEx
+#include <initguid.h> 
+#include "CLSID.h"
 
 #pragma comment(lib, "Mfplat.lib")
 #pragma comment(lib, "Mfreadwrite.lib")
@@ -8,77 +10,61 @@
 #pragma comment(lib, "Mf.lib")
 #pragma comment(lib, "mfsensorgroup.lib")
 
-VirtualCam::VirtualCam(const std::wstring& friendlyName)
-    : m_friendlyName(friendlyName),
-    m_pVirtualCamera(nullptr)
-{
+
+VirtualCam::VirtualCam(const std::wstring& name)
+    : m_name(name), m_camera(nullptr) {
 }
 
 VirtualCam::~VirtualCam() {
     Shutdown();
 }
 
-bool VirtualCam::Initialize() {
-    HRESULT hr;
+bool VirtualCam::Initialize()
+{
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
-    // Init COM Library
-    hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED); // Can be accessed from mulitple threads
-    if (FAILED(hr)) {
-        std::wcerr << L"COM init failed\n";
-        return false;
-    }
+    HRESULT hr = MFStartup(MF_VERSION);
+    if (FAILED(hr)) return false;
 
-    // Start Media Foundation
-    hr = MFStartup(MF_VERSION); // Auto select proper version for currently installed SDK
-    if (FAILED(hr)) {
-        std::wcerr << L"MFStartup failed\n";
-        CoUninitialize();
-        return false;
-    }
+    // 🔥 CLSID → 문자열 변환
+    wchar_t clsidStr[64];
+    StringFromGUID2(CLSID_MyMediaSource, clsidStr, 64);
 
-    // Convert GUID to string
-    wchar_t guidStr[64];
-    if (StringFromGUID2(CLSID_MyVirtualCamera, guidStr, 64) == 0) {
-        std::wcerr << L"GUID conversion failed\n";
-        Shutdown();
-        return false;
-    }
-
-    // Create Virtual Cam Instance
     hr = MFCreateVirtualCamera(
-        MFVirtualCameraType_SoftwareCameraSource, // Specify CAM is virtual - software based
-        MFVirtualCameraLifetime_Session, // CAM only available while program is alive
-        MFVirtualCameraAccess_AllUsers, // Currently logged in user can use cam
-        m_friendlyName.c_str(), // Displayed CAM name
-        guidStr,               
+        MFVirtualCameraType_SoftwareCameraSource,
+        MFVirtualCameraLifetime_Session,
+        MFVirtualCameraAccess_CurrentUser,
+        m_name.c_str(),
+        clsidStr,   // 🔥 핵심
         nullptr,
         0,
-        &m_pVirtualCamera
+        &m_camera
     );
 
-    if (FAILED(hr) || !m_pVirtualCamera) {
-        std::wcerr << L"Failed to create virtual camera: " << hr << std::endl;
-        Shutdown();
-        return false;
-    }
-
-    // Start CAM
-    hr = m_pVirtualCamera->Start(nullptr);
     if (FAILED(hr)) {
-        std::wcerr << L"Failed to start virtual camera: " << hr << std::endl;
-        Shutdown();
+        std::wcerr << L"CreateVirtualCamera failed: " << hr << std::endl;
         return false;
     }
 
-    std::wcout << L"Virtual Camera '" << m_friendlyName << L"' is now active.\n";
+    // 🔥 중요: source 안 넘김
+    hr = m_camera->Start(nullptr);
+
+    if (FAILED(hr)) {
+        std::wcerr << L"Start failed: " << hr << std::endl;
+        return false;
+    }
+
+    std::wcout << L"Virtual Camera started\n";
     return true;
 }
 
-void VirtualCam::Shutdown() {
-    if (m_pVirtualCamera) {
-        m_pVirtualCamera->Stop();
-        m_pVirtualCamera->Release();
-        m_pVirtualCamera = nullptr;
+void VirtualCam::Shutdown()
+{
+    if (m_camera) {
+        m_camera->Stop();
+        m_camera->Remove(); // 🔥 장치 제거
+        m_camera->Release();
+        m_camera = nullptr;
     }
 
     MFShutdown();
