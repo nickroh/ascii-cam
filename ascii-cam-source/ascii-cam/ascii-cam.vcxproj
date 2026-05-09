@@ -18,6 +18,36 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Activator.h" />
+    <ClInclude Include="EnumNames.h" />
+    <ClInclude Include="FrameGenerator.h" />
+    <ClInclude Include="framework.h" />
+    <ClInclude Include="MediaSource.h" />
+    <ClInclude Include="MediaStream.h" />
+    <ClInclude Include="MFTools.h" />
+    <ClInclude Include="pch.h" />
+    <ClInclude Include="resource.h" />
+    <ClInclude Include="Tools.h" />
+    <ClInclude Include="Undocumented.h" />
+    <ClInclude Include="WinTrace.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Activator.cpp" />
+    <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="EnumNames.cpp" />
+    <ClCompile Include="FrameGenerator.cpp" />
+    <ClCompile Include="MediaSource.cpp" />
+    <ClCompile Include="MediaStream.cpp" />
+    <ClCompile Include="MFTools.cpp" />
+    <ClCompile Include="pch.cpp" />
+    <ClCompile Include="Tools.cpp" />
+    <ClCompile Include="WinTrace.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ascii-cam.def" />
+    <None Include="packages.config" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
@@ -40,7 +70,7 @@
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Application</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
@@ -112,6 +142,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>C:\Users\roh51\Desktop\util\opencv\build\x64\vc16\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>opencv_world4120d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <ModuleDefinitionFile>ascii-cam.def</ModuleDefinitionFile>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -133,30 +164,14 @@
       <AdditionalDependencies>opencv_world4120.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <ClCompile Include="ClassFactory.cpp" />
-    <ClCompile Include="CLSID.cpp" />
-    <ClCompile Include="dllmain.cpp" />
-    <ClCompile Include="FrameEngine.cpp" />
-    <ClCompile Include="main.cpp" />
-    <ClCompile Include="AsciiEngine.cpp" />
-    <ClCompile Include="MediaSource.cpp" />
-    <ClCompile Include="MediaStream.cpp" />
-    <ClCompile Include="Register.cpp" />
-    <ClCompile Include="SharedMemory.cpp" />
-    <ClCompile Include="VirtualCam.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="AsciiEngine.h" />
-    <ClInclude Include="ClassFactory.h" />
-    <ClInclude Include="CLSID.h" />
-    <ClInclude Include="FrameEngine.h" />
-    <ClInclude Include="MediaSource.h" />
-    <ClInclude Include="MediaStream.h" />
-    <ClInclude Include="SharedMemory.h" />
-    <ClInclude Include="VirtualCam.h" />
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="..\packages\Microsoft.Windows.ImplementationLibrary.1.0.260126.7\build\native\Microsoft.Windows.ImplementationLibrary.targets" Condition="Exists('..\packages\Microsoft.Windows.ImplementationLibrary.1.0.260126.7\build\native\Microsoft.Windows.ImplementationLibrary.targets')" />
   </ImportGroup>
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('..\packages\Microsoft.Windows.ImplementationLibrary.1.0.260126.7\build\native\Microsoft.Windows.ImplementationLibrary.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.ImplementationLibrary.1.0.260126.7\build\native\Microsoft.Windows.ImplementationLibrary.targets'))" />
+  </Target>
 </Project>
