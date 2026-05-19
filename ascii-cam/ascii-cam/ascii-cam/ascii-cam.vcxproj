@@ -125,8 +125,10 @@
   <ItemGroup>
     <ClInclude Include="AsciiEngine.h" />
     <ClInclude Include="FrameEngine.h" />
+    <ClInclude Include="pch.h" />
     <ClInclude Include="SharedMemory.h" />
     <ClInclude Include="VirtualCam.h" />
+    <ClInclude Include="wcam.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AsciiEngine.cpp" />
@@ -134,6 +136,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="SharedMemory.cpp" />
     <ClCompile Include="VirtualCam.cpp" />
+    <ClCompile Include="wcam.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

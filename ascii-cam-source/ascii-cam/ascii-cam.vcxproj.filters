@@ -51,6 +51,12 @@
     <ClInclude Include="WinTrace.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="WebCamCapture.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ColorConverter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Activator.cpp">
@@ -83,11 +89,21 @@
     <ClCompile Include="WinTrace.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="WebCamCapture.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ColorConverter.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="ascii-cam.def">
       <Filter>Source Files</Filter>
     </None>
     <None Include="packages.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natvis" />
+    <Natvis Include="$(MSBuildThisFileDirectory)..\..\natvis\wil.natstepfilter" />
   </ItemGroup>
 </Project>

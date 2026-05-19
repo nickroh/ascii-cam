@@ -27,6 +27,12 @@
     <ClInclude Include="VirtualCam.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="wcam.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="pch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AsciiEngine.cpp">
@@ -42,6 +48,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="VirtualCam.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="wcam.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

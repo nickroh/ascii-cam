@@ -20,6 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Activator.h" />
+    <ClInclude Include="ColorConverter.h" />
     <ClInclude Include="EnumNames.h" />
     <ClInclude Include="FrameGenerator.h" />
     <ClInclude Include="framework.h" />
@@ -30,10 +31,12 @@
     <ClInclude Include="resource.h" />
     <ClInclude Include="Tools.h" />
     <ClInclude Include="Undocumented.h" />
+    <ClInclude Include="WebCamCapture.h" />
     <ClInclude Include="WinTrace.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Activator.cpp" />
+    <ClCompile Include="ColorConverter.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="EnumNames.cpp" />
     <ClCompile Include="FrameGenerator.cpp" />
@@ -42,6 +45,7 @@
     <ClCompile Include="MFTools.cpp" />
     <ClCompile Include="pch.cpp" />
     <ClCompile Include="Tools.cpp" />
+    <ClCompile Include="WebCamCapture.cpp" />
     <ClCompile Include="WinTrace.cpp" />
   </ItemGroup>
   <ItemGroup>

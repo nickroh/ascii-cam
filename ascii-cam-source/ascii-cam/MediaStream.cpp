@@ -6,6 +6,7 @@
 #include "FrameGenerator.h"
 #include "MediaStream.h"
 #include "MediaSource.h"
+#include "WebcamCapture.h"
 
 HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 {
@@ -24,7 +25,7 @@ HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 	auto types = wil::make_unique_cotaskmem_array<wil::com_ptr_nothrow<IMFMediaType>>(2);
 
 #define NUM_IMAGE_COLS 1280 // 640
-#define NUM_IMAGE_ROWS 960 //480
+#define NUM_IMAGE_ROWS 720 //480
 
 	wil::com_ptr_nothrow<IMFMediaType> rgbType;
 	RETURN_IF_FAILED(MFCreateMediaType(&rgbType));
@@ -63,7 +64,7 @@ HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 	wil::com_ptr_nothrow<IMFMediaTypeHandler> handler;
 	RETURN_IF_FAILED(_descriptor->GetMediaTypeHandler(&handler));
 	TraceMFAttributes(handler.get(), L"MediaTypeHandler");
-	RETURN_IF_FAILED(handler->SetCurrentMediaType(types[0]));
+	RETURN_IF_FAILED(handler->SetCurrentMediaType(types[1]));
 
 	return S_OK;
 }
@@ -78,24 +79,169 @@ HRESULT MediaStream::Start(IMFMediaType* type)
 		WINTRACE(L"MediaStream::Start format: %s", GUID_ToStringW(_format).c_str());
 	}
 
+	RETURN_IF_FAILED(
+		_allocator->InitializeSampleAllocator(
+			10,
+			type
+		)
+	);
+
+	_state = MF_STREAM_STATE_RUNNING;
+
+	_captureThread = std::jthread(
+		[this]()
+		{
+			CaptureLoop();
+		}
+	);
+
+	RETURN_IF_FAILED(
+		_converter.Initialize(
+			1280,
+			720
+		)
+	);
+
+	RETURN_IF_FAILED(
+		_queue->QueueEventParamVar(
+			MEStreamStarted,
+			GUID_NULL,
+			S_OK,
+			nullptr
+		)
+	);
+
+	return S_OK;
+
 	// at this point, set D3D manager may have not been called
 	// so we want to create a D2D1 renter target anyway
-	RETURN_IF_FAILED(_generator.EnsureRenderTarget(NUM_IMAGE_COLS, NUM_IMAGE_ROWS));
-
-	RETURN_IF_FAILED(_allocator->InitializeSampleAllocator(10, type));
-	RETURN_IF_FAILED(_queue->QueueEventParamVar(MEStreamStarted, GUID_NULL, S_OK, nullptr));
-	_state = MF_STREAM_STATE_RUNNING;
-	return S_OK;
+	// original
+	//RETURN_IF_FAILED(_generator.EnsureRenderTarget(NUM_IMAGE_COLS, NUM_IMAGE_ROWS));
+	//RETURN_IF_FAILED(_capture.Initialize());
+	//RETURN_IF_FAILED(_allocator->InitializeSampleAllocator(10, type));
+	//RETURN_IF_FAILED(_queue->QueueEventParamVar(MEStreamStarted, GUID_NULL, S_OK, nullptr));
+	//_state = MF_STREAM_STATE_RUNNING;
+	//return S_OK;
 }
 
 HRESULT MediaStream::Stop()
 {
 	RETURN_HR_IF(MF_E_SHUTDOWN, !_queue || !_allocator);
+	if (_captureThread.joinable())
+	{
+		_captureThread.join();
+	}
 
+	_capture.Shutdown();
 	RETURN_IF_FAILED(_allocator->UninitializeSampleAllocator());
 	RETURN_IF_FAILED(_queue->QueueEventParamVar(MEStreamStopped, GUID_NULL, S_OK, nullptr));
 	_state = MF_STREAM_STATE_STOPPED;
 	return S_OK;
+}
+
+void MediaStream::CaptureLoop()
+{
+	//
+	// webcam init
+	//
+	HRESULT hr = _capture.Initialize(
+		1280,
+		720,
+		30
+	);
+
+	if (FAILED(hr))
+	{
+		WINTRACE(
+			L"Capture Initialize Failed: 0x%08X",
+			hr
+		);
+
+		return;
+	}
+
+	//
+	// color converter init
+	// YUY2 -> NV12
+	//
+	hr = _converter.Initialize(
+		1280,
+		720
+	);
+
+	if (FAILED(hr))
+	{
+		WINTRACE(
+			L"Converter Initialize Failed: 0x%08X",
+			hr
+		);
+
+		_capture.Shutdown();
+
+		return;
+	}
+
+	WINTRACE(L"CaptureLoop Started");
+
+	while (true)
+	{
+		if (_state != MF_STREAM_STATE_RUNNING)
+		{
+			break;
+		}
+
+		//
+		// webcam frame
+		//
+		wil::com_ptr_nothrow<IMFSample> webcamSample;
+
+		hr = _capture.GetFrame(
+			&webcamSample
+		);
+
+		if (FAILED(hr) || !webcamSample)
+		{
+			WINTRACE(
+				L"GetFrame Failed: 0x%08X",
+				hr
+			);
+
+			continue;
+		}
+
+		//
+		// convert YUY2 -> NV12
+		//
+		wil::com_ptr_nothrow<IMFSample> nv12Sample;
+
+		hr = _converter.Convert(
+			webcamSample.get(),
+			&nv12Sample
+		);
+
+		if (FAILED(hr) || !nv12Sample)
+		{
+			WINTRACE(
+				L"Convert Failed: 0x%08X",
+				hr
+			);
+
+			continue;
+		}
+
+		//
+		// latest frame update
+		//
+		{
+			winrt::slim_lock_guard guard(_frameLock);
+
+			_latestFrame = nv12Sample;
+		}
+	}
+
+	_capture.Shutdown();
+
+	WINTRACE(L"CaptureLoop Ended");
 }
 
 MFSampleAllocatorUsage MediaStream::GetAllocatorUsage()
@@ -202,28 +348,268 @@ STDMETHODIMP MediaStream::GetStreamDescriptor(IMFStreamDescriptor** ppStreamDesc
 	return S_OK;
 }
 
-STDMETHODIMP MediaStream::RequestSample(IUnknown* pToken)
+STDMETHODIMP MediaStream::RequestSample(
+	IUnknown* pToken
+)
 {
-	//WINTRACE(L"MediaStream::RequestSample pToken:%p", pToken);
 	winrt::slim_lock_guard lock(_lock);
-	RETURN_HR_IF(MF_E_SHUTDOWN, !_allocator || !_queue);
 
+	RETURN_HR_IF(
+		MF_E_SHUTDOWN,
+		!_queue
+	);
+
+	//
+	// latest webcam frame
+	//
+	wil::com_ptr_nothrow<IMFSample> webcamSample;
+
+	{
+		winrt::slim_lock_guard guard(_frameLock);
+
+		webcamSample = _latestFrame;
+	}
+
+	if (!webcamSample)
+	{
+		return S_OK;
+	}
+
+	//
+	// source buffer
+	//
+	wil::com_ptr_nothrow<IMFMediaBuffer> srcBuffer;
+
+	RETURN_IF_FAILED(
+		webcamSample->ConvertToContiguousBuffer(
+			&srcBuffer
+		)
+	);
+
+	BYTE* src = nullptr;
+
+	DWORD srcMax = 0;
+	DWORD srcCur = 0;
+
+	RETURN_IF_FAILED(
+		srcBuffer->Lock(
+			&src,
+			&srcMax,
+			&srcCur
+		)
+	);
+
+	//
+	// create output sample
+	//
 	wil::com_ptr_nothrow<IMFSample> sample;
-	RETURN_IF_FAILED(_allocator->AllocateSample(&sample));
-	RETURN_IF_FAILED(sample->SetSampleTime(MFGetSystemTime()));
-	RETURN_IF_FAILED(sample->SetSampleDuration(333333));
 
-	// generate frame
-	wil::com_ptr_nothrow<IMFSample> outSample;
-	RETURN_IF_FAILED(_generator.Generate(sample.get(), _format, &outSample));
+	RETURN_IF_FAILED(
+		MFCreateSample(&sample)
+	);
 
+	//
+	// create NV12 buffer
+	//
+	wil::com_ptr_nothrow<IMFMediaBuffer> dstBuffer;
+
+	RETURN_IF_FAILED(
+		MFCreateMemoryBuffer(
+			srcCur,
+			&dstBuffer
+		)
+	);
+
+	BYTE* dst = nullptr;
+
+	DWORD dstMax = 0;
+	DWORD dstCur = 0;
+
+	RETURN_IF_FAILED(
+		dstBuffer->Lock(
+			&dst,
+			&dstMax,
+			&dstCur
+		)
+	);
+
+	//
+	// copy frame
+	//
+	CopyMemory(
+		dst,
+		src,
+		srcCur
+	);
+
+	RETURN_IF_FAILED(
+		dstBuffer->SetCurrentLength(
+			srcCur
+		)
+	);
+
+	srcBuffer->Unlock();
+	dstBuffer->Unlock();
+
+	//
+	// attach buffer
+	//
+	RETURN_IF_FAILED(
+		sample->AddBuffer(
+			dstBuffer.get()
+		)
+	);
+
+	//
+	// timestamps
+	//
+	RETURN_IF_FAILED(
+		sample->SetSampleTime(
+			MFGetSystemTime()
+		)
+	);
+
+	RETURN_IF_FAILED(
+		sample->SetSampleDuration(
+			333333
+		)
+	);
+
+	//
+	// token
+	//
 	if (pToken)
 	{
-		RETURN_IF_FAILED(outSample->SetUnknown(MFSampleExtension_Token, pToken));
+		RETURN_IF_FAILED(
+			sample->SetUnknown(
+				MFSampleExtension_Token,
+				pToken
+			)
+		);
 	}
-	RETURN_IF_FAILED(_queue->QueueEventParamUnk(MEMediaSample, GUID_NULL, S_OK, outSample.get()));
+
+	//
+	// send to virtual camera client
+	//
+	RETURN_IF_FAILED(
+		_queue->QueueEventParamUnk(
+			MEMediaSample,
+			GUID_NULL,
+			S_OK,
+			sample.get()
+		)
+	);
+
 	return S_OK;
 }
+
+//STDMETHODIMP MediaStream::RequestSample(IUnknown* pToken)
+//{
+//	winrt::slim_lock_guard lock(_lock);
+//
+//	RETURN_HR_IF(MF_E_SHUTDOWN, !_allocator || !_queue);
+//
+//	wil::com_ptr_nothrow<IMFSample> sample;
+//
+//	RETURN_IF_FAILED(
+//		_allocator->AllocateSample(&sample)
+//	);
+//
+//	wil::com_ptr_nothrow<IMFSample> webcamSample;
+//
+//	RETURN_IF_FAILED(
+//		_capture.GetFrame(&webcamSample)
+//	);
+//
+//	if (!webcamSample)
+//	{
+//		return E_FAIL;
+//	}
+//
+//	wil::com_ptr_nothrow<IMFMediaBuffer> srcBuffer;
+//	wil::com_ptr_nothrow<IMFMediaBuffer> dstBuffer;
+//
+//	RETURN_IF_FAILED(
+//		webcamSample->GetBufferByIndex(
+//			0,
+//			&srcBuffer
+//		)
+//	);
+//
+//	RETURN_IF_FAILED(
+//		sample->GetBufferByIndex(
+//			0,
+//			&dstBuffer
+//		)
+//	);
+//
+//	BYTE* src = nullptr;
+//	BYTE* dst = nullptr;
+//
+//	DWORD srcMax = 0;
+//	DWORD srcCur = 0;
+//
+//	DWORD dstMax = 0;
+//	DWORD dstCur = 0;
+//
+//	RETURN_IF_FAILED(
+//		srcBuffer->Lock(
+//			&src,
+//			&srcMax,
+//			&srcCur
+//		)
+//	);
+//
+//	RETURN_IF_FAILED(
+//		dstBuffer->Lock(
+//			&dst,
+//			&dstMax,
+//			&dstCur
+//		)
+//	);
+//
+//	if (srcCur > dstMax)
+//	{
+//		srcBuffer->Unlock();
+//		dstBuffer->Unlock();
+//		return E_FAIL;
+//	}
+//
+//	CopyMemory(
+//		dst,
+//		src,
+//		srcCur
+//	);
+//
+//	RETURN_IF_FAILED(
+//		dstBuffer->SetCurrentLength(srcCur)
+//	);
+//
+//	srcBuffer->Unlock();
+//	dstBuffer->Unlock();
+//
+//	sample->SetSampleTime(MFGetSystemTime());
+//	sample->SetSampleDuration(333333);
+//
+//	if (pToken)
+//	{
+//		sample->SetUnknown(
+//			MFSampleExtension_Token,
+//			pToken
+//		);
+//	}
+//
+//	RETURN_IF_FAILED(
+//		_queue->QueueEventParamUnk(
+//			MEMediaSample,
+//			GUID_NULL,
+//			S_OK,
+//			sample.get()
+//		)
+//	);
+//
+//	return S_OK;
+//}
 
 // IMFMediaStream2
 STDMETHODIMP MediaStream::SetStreamState(MF_STREAM_STATE value)
