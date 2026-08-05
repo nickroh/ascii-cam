@@ -2,6 +2,7 @@
 
 #include "WebCamCapture.h"
 #include "ColorConverter.h"
+#include "FrameGenerator.h"
 
 #include <thread>
 
@@ -13,7 +14,6 @@ struct MediaStream :
     IKsControl>
 {
 public:
-
     // IMFMediaEventGenerator
     STDMETHOD(BeginGetEvent)(
         IMFAsyncCallback* pCallback,

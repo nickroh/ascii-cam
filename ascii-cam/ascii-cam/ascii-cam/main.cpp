@@ -240,7 +240,7 @@ int wmain()
         MFVirtualCameraType_SoftwareCameraSource,
         MFVirtualCameraLifetime_Session,
         MFVirtualCameraAccess_CurrentUser,
-        L"My Virtual Camera",
+        L"Ascii Cam",
         clsid,
         nullptr,
         0,

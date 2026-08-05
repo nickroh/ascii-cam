@@ -3,17 +3,16 @@
 #include "Tools.h"
 #include "EnumNames.h"
 #include "MFTools.h"
-#include "FrameGenerator.h"
 #include "MediaStream.h"
 #include "MediaSource.h"
-#include "WebcamCapture.h"
+#include "WebCamCapture.h"       // fixed casing to match the real header file
 
 HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 {
 	RETURN_HR_IF_NULL(E_POINTER, source);
 	_source = source;
 	_index = index;
-
+		
 	RETURN_IF_FAILED(SetGUID(MF_DEVICESTREAM_STREAM_CATEGORY, PINNAME_VIDEO_CAPTURE));
 	RETURN_IF_FAILED(SetUINT32(MF_DEVICESTREAM_STREAM_ID, index));
 	RETURN_IF_FAILED(SetUINT32(MF_DEVICESTREAM_FRAMESERVER_SHARED, 1));

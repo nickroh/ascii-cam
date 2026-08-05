@@ -47,3 +47,9 @@
 - [ ] Phase 2: Win32 공유 메모리(IPC) 인터페이스 구축
 - [ ] Phase 3: Media Foundation 가상 카메라 DLL 구현 및 장치 등록
 - [ ] Phase 4: 사용자 제어 GUI 개발 및 안정성 테스트
+
+
+
+
+
+net start FrameServer
