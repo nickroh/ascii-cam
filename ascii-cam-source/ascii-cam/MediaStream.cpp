@@ -208,25 +208,25 @@ void MediaStream::CaptureLoop()
 			continue;
 		}
 
-		//
-		// convert YUY2 -> NV12
-		//
-		wil::com_ptr_nothrow<IMFSample> nv12Sample;
+		////
+		//// convert YUY2 -> NV12
+		////
+		//wil::com_ptr_nothrow<IMFSample> nv12Sample;
 
-		hr = _converter.Convert(
-			webcamSample.get(),
-			&nv12Sample
-		);
+		//hr = _converter.Convert(
+		//	webcamSample.get(),
+		//	&nv12Sample
+		//);
 
-		if (FAILED(hr) || !nv12Sample)
-		{
-			WINTRACE(
-				L"Convert Failed: 0x%08X",
-				hr
-			);
+		//if (FAILED(hr) || !nv12Sample)
+		//{
+		//	WINTRACE(
+		//		L"Convert Failed: 0x%08X",
+		//		hr
+		//	);
 
-			continue;
-		}
+		//	continue;
+		//}
 
 		//
 		// latest frame update
@@ -234,7 +234,7 @@ void MediaStream::CaptureLoop()
 		{
 			winrt::slim_lock_guard guard(_frameLock);
 
-			_latestFrame = nv12Sample;
+			_latestFrame = webcamSample;
 		}
 	}
 

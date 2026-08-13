@@ -12,5 +12,7 @@
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dmoguids.lib")
 #pragma comment(lib, "wmcodecdspuuid.lib")
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
 
 #endif //PCH_H

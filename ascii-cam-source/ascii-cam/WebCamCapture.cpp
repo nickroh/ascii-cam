@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "WebcamCapture.h"
+#include <d3d11.h> 
+#include <mfapi.h>
 
 #include <mferror.h>
 
@@ -93,8 +95,92 @@ HRESULT WebcamCapture::Initialize(
 
     if (!found) return E_FAIL;
 
+    // 3-2. D3D 11 & DXGI MGM 생성 시도
+    wil::com_ptr_nothrow<IMFDXGIDeviceManager> dxgiManager;
+    UINT resetToken = 0;
+    bool isGpuAccelerated = false;
+
+    wil::com_ptr_nothrow<ID3D11Device> d3d11Device;
+    wil::com_ptr_nothrow<ID3D11DeviceContext> d3d11Context;
+    D3D_FEATURE_LEVEL featureLevel;
+
+    // D3D11 디바이스 생성 시도
+    HRESULT hrD3D = D3D11CreateDevice(
+        nullptr,
+        D3D_DRIVER_TYPE_HARDWARE,
+        nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+        nullptr, 0,
+        D3D11_SDK_VERSION,
+        &d3d11Device,
+        &featureLevel,
+        &d3d11Context
+    );
+
+    if (SUCCEEDED(hrD3D) && d3d11Device)
+    {
+        // Media Foundation 스레드 안전성 확보
+        wil::com_ptr_nothrow<ID3D10Multithread> multiThread;
+        if (SUCCEEDED(d3d11Device->QueryInterface(IID_PPV_ARGS(&multiThread))))
+        {
+            multiThread->SetMultithreadProtected(TRUE);
+        }
+
+        // DXGI Device Manager 생성 시도
+        HRESULT hrDXGI = MFCreateDXGIDeviceManager(&resetToken, &dxgiManager);
+        if (SUCCEEDED(hrDXGI) && dxgiManager)
+        {
+            if (SUCCEEDED(dxgiManager->ResetDevice(d3d11Device.get(), resetToken)))
+            {
+                isGpuAccelerated = true;
+                WINTRACE(L"[Wcam] GPU Acceleration Enabled (Direct3D 11).");
+            }
+            else
+            {
+                dxgiManager.reset();
+                WINTRACE(L"[Wcam] DXGI ResetDevice failed. Falling back to CPU mode.");
+            }
+        }
+        else
+        {
+            WINTRACE(L"[Wcam] DXGI Device Manager creation failed. Falling back to CPU mode.");
+        }
+    }
+    else
+    {
+        WINTRACE(L"[Wcam] D3D11 Device creation failed (hr = 0x%08X). Falling back to CPU mode.", hrD3D);
+    }
+
+    // 3-3. apply CPU/CPU attribute
+    wil::com_ptr_nothrow<IMFAttributes> readerAttributes;
+    hr = MFCreateAttributes(&readerAttributes, 4);
+    if (FAILED(hr)) return hr;
+
+    // 하드웨어 디코더 가속 요청
+    readerAttributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+    readerAttributes->SetUINT32(MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+
+    // GPU가 사용 가능한 경우 DXGI Manager 바인딩
+    if (isGpuAccelerated && dxgiManager)
+    {
+        readerAttributes->SetUnknown(MF_SOURCE_READER_D3D_MANAGER, dxgiManager.get());
+    }
+
+
     // 4. Source Reader 생성
-    hr = MFCreateSourceReaderFromMediaSource(_source.Get(), nullptr, &_reader);
+    hr = MFCreateSourceReaderFromMediaSource(_source.Get(), readerAttributes.get(), &_reader);
+
+    // GPU 속성 결합으로 생성이 실패한 경우 CPU 전용 속성으로 재시도 (2차 Fallback)
+    if (FAILED(hr) && isGpuAccelerated)
+    {
+        WINTRACE(L"[Wcam] Reader creation failed with GPU attributes. Retrying in CPU mode...");
+        readerAttributes->DeleteItem(MF_SOURCE_READER_D3D_MANAGER);
+        isGpuAccelerated = false;
+        dxgiManager.reset();
+
+        hr = MFCreateSourceReaderFromMediaSource(_source.Get(), readerAttributes.get(), &_reader);
+    }
+
     if (FAILED(hr)) return hr;
 
     // 5. [개선] 단일 루프로 최고 FPS 포맷 탐색
@@ -184,36 +270,32 @@ HRESULT WebcamCapture::Initialize(
     hr = _reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, selectedNativeType.get());
     if (FAILED(hr)) return hr;
 
+    // Native 포맷이 YUY2/NV12가 아닌 경우 (예: MJPEG) -> 항상 NV12로 디코딩
     if (!targetIsYUY2)
     {
         wil::com_ptr_nothrow<IMFMediaType> outputType;
         hr = MFCreateMediaType(&outputType);
         if (FAILED(hr)) return hr;
 
-        // 1. 기본 타입 설정
         hr = outputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
         if (FAILED(hr)) return hr;
 
-        hr = outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_YUY2);
+        // [통일] GPU/CPU 구분 없이 항상 NV12로 출력 세팅
+        hr = outputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
         if (FAILED(hr)) return hr;
 
-        // 2. [필수 추가] 디코더가 출력할 해상도 지정 (1280x720)
         hr = MFSetAttributeSize(outputType.get(), MF_MT_FRAME_SIZE, width, height);
         if (FAILED(hr)) return hr;
 
-        // 3. [필수 추가] 디코더가 출력할 프레임레이트 지정 (30fps)
         hr = MFSetAttributeRatio(outputType.get(), MF_MT_FRAME_RATE, maxFpsFound, 1);
         if (FAILED(hr)) return hr;
 
-        // 4. 완벽하게 구성된 YUY2 출력 MediaType 적용
+        // 디코더 출력 포맷 적용
         hr = _reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, outputType.get());
         if (FAILED(hr)) return hr;
 
-        WINTRACE(L"[Wcam] Auto Decoder Configured: Native (%u fps) -> YUY2 Output (%ux%u)", maxFpsFound, width, height);
-    }
-    else
-    {
-        WINTRACE(L"[Wcam] Native YUY2 Selected (%u fps)", maxFpsFound);
+        WINTRACE(L"[Wcam] Decoder Configured (%s): Native (%u fps) -> Output (NV12, %ux%u)",
+            isGpuAccelerated ? L"GPU HW" : L"CPU SW", maxFpsFound, width, height);
     }
 
     return S_OK;
