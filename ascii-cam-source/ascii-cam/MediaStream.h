@@ -3,7 +3,8 @@
 #include "WebCamCapture.h"
 #include "ColorConverter.h"
 #include "FrameGenerator.h"
-
+#include <winerror.h>
+#include <mferror.h>
 #include <thread>
 
 struct MediaStream :
@@ -119,7 +120,7 @@ public:
 
 private:
 
-    void CaptureLoop();
+    void CaptureLoop(std::stop_token stopToken);
 
 #if _DEBUG
 

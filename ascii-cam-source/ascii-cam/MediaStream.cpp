@@ -6,6 +6,7 @@
 #include "MediaStream.h"
 #include "MediaSource.h"
 #include "WebCamCapture.h"       // fixed casing to match the real header file
+#include "Filter.h"
 
 HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 {
@@ -71,12 +72,19 @@ HRESULT MediaStream::Initialize(IMFMediaSource* source, int index)
 HRESULT MediaStream::Start(IMFMediaType* type)
 {
 	RETURN_HR_IF(MF_E_SHUTDOWN, !_queue || !_allocator);
-
+	UINT32 width = 1280, height = 720;
+	UINT32 fpsNumerator = 30, fpsDenominator = 1;
 	if (type)
 	{
 		RETURN_IF_FAILED(type->GetGUID(MF_MT_SUBTYPE, &_format));
-		WINTRACE(L"MediaStream::Start format: %s", GUID_ToStringW(_format).c_str());
+		MFGetAttributeSize(type, MF_MT_FRAME_SIZE, &width, &height);
+		MFGetAttributeRatio(type, MF_MT_FRAME_RATE, &fpsNumerator, &fpsDenominator);
+		WINTRACE(L"MediaStream::Start - Format: %s, Resolution: %dx%d, FPS: %d",
+			GUID_ToStringW(_format).c_str(), width, height,
+			(fpsDenominator > 0 ? fpsNumerator / fpsDenominator : 30));
 	}
+	UINT32 framerate = (fpsDenominator > 0) ? (fpsNumerator / fpsDenominator) : 30;
+	RETURN_IF_FAILED(_capture.Initialize(width, height, framerate));
 
 	RETURN_IF_FAILED(
 		_allocator->InitializeSampleAllocator(
@@ -86,29 +94,22 @@ HRESULT MediaStream::Start(IMFMediaType* type)
 	);
 
 	_state = MF_STREAM_STATE_RUNNING;
-
-	_captureThread = std::jthread(
-		[this]()
-		{
-			CaptureLoop();
-		}
+	HRESULT hr = _queue->QueueEventParamVar(
+		MEStreamStarted,
+		GUID_NULL,
+		S_OK,
+		nullptr
 	);
-
-	RETURN_IF_FAILED(
-		_converter.Initialize(
-			1280,
-			720
-		)
-	);
-
-	RETURN_IF_FAILED(
-		_queue->QueueEventParamVar(
-			MEStreamStarted,
-			GUID_NULL,
-			S_OK,
-			nullptr
-		)
-	);
+	if (FAILED(hr))
+	{
+		// 이벤트 발송 실패 시 롤백 처리
+		_state = MF_STREAM_STATE_STOPPED;
+		_capture.Shutdown();
+		return hr;
+	}
+	_captureThread = std::jthread([this](std::stop_token stopToken) {
+		CaptureLoop(stopToken);
+		});
 
 	return S_OK;
 
@@ -138,106 +139,43 @@ HRESULT MediaStream::Stop()
 	return S_OK;
 }
 
-void MediaStream::CaptureLoop()
+void MediaStream::CaptureLoop(std::stop_token stopToken)
 {
-	//
-	// webcam init
-	//
-	HRESULT hr = _capture.Initialize(
-		1280,
-		720,
-		30
-	);
-
-	if (FAILED(hr))
-	{
-		WINTRACE(
-			L"Capture Initialize Failed: 0x%08X",
-			hr
-		);
-
-		return;
-	}
-
-	//
-	// color converter init
-	// YUY2 -> NV12
-	//
-	hr = _converter.Initialize(
-		1280,
-		720
-	);
-
-	if (FAILED(hr))
-	{
-		WINTRACE(
-			L"Converter Initialize Failed: 0x%08X",
-			hr
-		);
-
-		_capture.Shutdown();
-
-		return;
-	}
-
 	WINTRACE(L"CaptureLoop Started");
-
-	while (true)
+	while (!stopToken.stop_requested() && _state == MF_STREAM_STATE_RUNNING)
 	{
-		if (_state != MF_STREAM_STATE_RUNNING)
-		{
-			break;
-		}
-
-		//
-		// webcam frame
-		//
 		wil::com_ptr_nothrow<IMFSample> webcamSample;
 
-		hr = _capture.GetFrame(
-			&webcamSample
-		);
+		// 프레임 캡처
+		HRESULT hr = _capture.GetFrame(&webcamSample);
 
 		if (FAILED(hr) || !webcamSample)
 		{
-			WINTRACE(
-				L"GetFrame Failed: 0x%08X",
-				hr
-			);
+			WINTRACE(L"GetFrame Failed: 0x%08X", hr);
+
+			// 장치가 끊겼거나 심각한 실패일 경우 루프 탈출 고려
+			if (hr == MF_E_VIDEO_RECORDING_DEVICE_INVALIDATED ||
+				hr == HRESULT_FROM_WIN32(ERROR_DEVICE_NOT_CONNECTED) ||
+				hr == E_HANDLE)
+			{
+				WINTRACE(L"Webcam device disconnected. (0x%08X)", hr);
+				break;
+			}
 
 			continue;
 		}
 
-		////
-		//// convert YUY2 -> NV12
-		////
-		//wil::com_ptr_nothrow<IMFSample> nv12Sample;
+		// (필요 시) 후처리 단계
+		// _postProcessor.Process(webcamSample.get(), &processedSample);
 
-		//hr = _converter.Convert(
-		//	webcamSample.get(),
-		//	&nv12Sample
-		//);
-
-		//if (FAILED(hr) || !nv12Sample)
-		//{
-		//	WINTRACE(
-		//		L"Convert Failed: 0x%08X",
-		//		hr
-		//	);
-
-		//	continue;
-		//}
-
-		//
-		// latest frame update
-		//
+		// 최신 프레임 스레드 안전 업데이트
 		{
 			winrt::slim_lock_guard guard(_frameLock);
-
-			_latestFrame = webcamSample;
+			_latestFrame = std::move(webcamSample); // std::move로 Ref-Count 증감 오버헤드 방지
 		}
 	}
 
+	// 스레드 종료 시 캡처 장치 자원 해제
 	_capture.Shutdown();
 
 	WINTRACE(L"CaptureLoop Ended");

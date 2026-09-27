@@ -20,8 +20,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Activator.h" />
+    <ClInclude Include="AsciiEngine.h" />
     <ClInclude Include="ColorConverter.h" />
     <ClInclude Include="EnumNames.h" />
+    <ClInclude Include="Filter.h" />
     <ClInclude Include="FrameGenerator.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="MediaSource.h" />
@@ -36,9 +38,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Activator.cpp" />
+    <ClCompile Include="AsciiEngine.cpp" />
     <ClCompile Include="ColorConverter.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="EnumNames.cpp" />
+    <ClCompile Include="Filter.cpp" />
     <ClCompile Include="FrameGenerator.cpp" />
     <ClCompile Include="MediaSource.cpp" />
     <ClCompile Include="MediaStream.cpp" />

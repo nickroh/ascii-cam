@@ -1,5 +1,5 @@
+// deprecated
 #include "ColorConverter.h"
-
 #include <wmcodecdsp.h>
 
 ColorConverter::ColorConverter()
