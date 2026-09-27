@@ -1,117 +1,356 @@
+#include "pch.h"
 #include "AsciiEngine.h"
+#include <d3dcompiler.h>
 
-#include <algorithm>
+#pragma comment(lib, "d3dcompiler.lib")
 
-#pragma comment(lib, "gdi32.lib")
+static const char* g_AsciiComputeShaderHLSL = R"(
+Texture2D<float> inputTex : register(t0);
+RWTexture2D<float4> outputTex : register(u0);
 
-// Required for the static constexpr array when compiling before C++17.
-constexpr char AsciiEngine::CHARSET[];
+static const uint CHAR_WIDTH = 8;
+static const uint CHAR_HEIGHT = 16;
+static const uint CHAR_COUNT = 10;
 
-void AsciiEngine::Initialize(UINT width, UINT height)
+static const uint glyphs[CHAR_COUNT][CHAR_HEIGHT] =
+{
+    { 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0 },                               // space
+    { 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0x18,0x18 },                         // .
+    { 0,0,0,0,0,0,0,0, 0x18,0x18,0,0,0,0x18,0x18,0 },                   // :
+    { 0,0,0,0,0,0,0,0, 0,0x7E,0x7E,0,0,0,0,0 },                         // -
+    { 0,0,0,0,0,0,0x7E,0x7E, 0,0,0x7E,0x7E,0,0,0,0 },                   // =
+    { 0,0,0,0,0,0x18,0x18,0x18, 0x7E,0x7E,0x18,0x18,0x18,0,0,0 },       // +
+    { 0,0,0,0,0,0x18,0x18,0x5A, 0x3C,0x3C,0x5A,0x18,0x18,0,0,0 },       // *
+    { 0,0,0,0x24,0x24,0x7E,0x7E,0x24, 0x24,0x7E,0x7E,0x24,0x24,0,0,0 }, // #
+    { 0,0,0,0x62,0x62,0x64,0x08,0x10, 0x20,0x4C,0x8C,0x8C,0,0,0,0 },     // %
+    { 0,0,0,0x3C,0x42,0x99,0xA5,0xA5, 0x9D,0x40,0x3C,0x3C,0,0,0,0 }      // @
+};
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    uint width, height;
+    inputTex.GetDimensions(width, height);
+
+    uint2 pos = dtid.xy;
+    if (pos.x >= width || pos.y >= height) return;
+
+    uint2 cellStart = (pos / uint2(CHAR_WIDTH, CHAR_HEIGHT)) * uint2(CHAR_WIDTH, CHAR_HEIGHT);
+    uint2 cellEnd = min(cellStart + uint2(CHAR_WIDTH, CHAR_HEIGHT), uint2(width, height));
+
+    float lumSum = 0.0f;
+    uint count = 0;
+    
+    for (uint y = cellStart.y; y < cellEnd.y; ++y)
+    {
+        for (uint x = cellStart.x; x < cellEnd.x; ++x)
+        {
+            lumSum += inputTex.Load(int3(x, y, 0)); 
+            ++count;
+        }
+    }
+
+    float luminance = lumSum / max((float)count, 1.0f);
+    float tone = pow(saturate(luminance), 0.82f);
+    uint glyphIndex = min((uint)floor(tone * (CHAR_COUNT - 1) + 0.5f), CHAR_COUNT - 1);
+
+    uint2 local = pos - cellStart;
+    uint rowBits = glyphs[glyphIndex][local.y];
+    bool ink = ((rowBits >> (7 - local.x)) & 1) != 0;
+
+    outputTex[pos] = ink ? float4(1.0f, 1.0f, 1.0f, 1.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
+}
+)";
+
+AsciiEngine::~AsciiEngine()
+{
+    Shutdown();
+}
+
+HRESULT AsciiEngine::Initialize(UINT width, UINT height)
 {
     _width = width;
     _height = height;
+
+    UINT createDeviceFlags = 0;
+
+#ifdef _DEBUG
+    createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+
+    D3D_FEATURE_LEVEL featureLevels[] =
+    {
+        D3D_FEATURE_LEVEL_11_0
+    };
+
+    D3D_FEATURE_LEVEL outFeatureLevel;
+
+    RETURN_IF_FAILED(
+        D3D11CreateDevice(
+            nullptr,
+            D3D_DRIVER_TYPE_HARDWARE,
+            nullptr,
+            createDeviceFlags,
+            featureLevels,
+            _countof(featureLevels),
+            D3D11_SDK_VERSION,
+            &_device,
+            &outFeatureLevel,
+            &_context
+        )
+    );
+
+    wil::com_ptr_nothrow<ID3DBlob> shaderBlob;
+    wil::com_ptr_nothrow<ID3DBlob> errorBlob;
+
+    HRESULT hr = D3DCompile(
+        g_AsciiComputeShaderHLSL,
+        strlen(g_AsciiComputeShaderHLSL),
+        "AsciiCS",
+        nullptr,
+        nullptr,
+        "main",
+        "cs_5_0",
+        0,
+        0,
+        &shaderBlob,
+        &errorBlob
+    );
+
+    if (FAILED(hr))
+    {
+        if (errorBlob)
+        {
+            OutputDebugStringA(
+                static_cast<const char*>(
+                    errorBlob->GetBufferPointer()
+                    )
+            );
+        }
+        return hr;
+    }
+
+    RETURN_IF_FAILED(
+        _device->CreateComputeShader(
+            shaderBlob->GetBufferPointer(),
+            shaderBlob->GetBufferSize(),
+            nullptr,
+            &_computeShader
+        )
+    );
+
+    D3D11_TEXTURE2D_DESC inputDesc = {};
+    inputDesc.Width = _width;
+    inputDesc.Height = _height;
+    inputDesc.MipLevels = 1;
+    inputDesc.ArraySize = 1;
+    inputDesc.Format = DXGI_FORMAT_R8_UNORM;
+    inputDesc.SampleDesc.Count = 1;
+    inputDesc.Usage = D3D11_USAGE_DYNAMIC;
+    inputDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    inputDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    RETURN_IF_FAILED(
+        _device->CreateTexture2D(
+            &inputDesc,
+            nullptr,
+            &_inputTexture
+        )
+    );
+
+    RETURN_IF_FAILED(
+        _device->CreateShaderResourceView(
+            _inputTexture.get(),
+            nullptr,
+            &_inputSRV
+        )
+    );
+
+    D3D11_TEXTURE2D_DESC outputDesc = {};
+    outputDesc.Width = _width;
+    outputDesc.Height = _height;
+    outputDesc.MipLevels = 1;
+    outputDesc.ArraySize = 1;
+    outputDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    outputDesc.SampleDesc.Count = 1;
+    outputDesc.Usage = D3D11_USAGE_DEFAULT;
+    outputDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+
+    RETURN_IF_FAILED(
+        _device->CreateTexture2D(
+            &outputDesc,
+            nullptr,
+            &_outputTexture
+        )
+    );
+
+    RETURN_IF_FAILED(
+        _device->CreateUnorderedAccessView(
+            _outputTexture.get(),
+            nullptr,
+            &_outputUAV
+        )
+    );
+
+    D3D11_TEXTURE2D_DESC stagingDesc = {};
+    stagingDesc.Width = _width;
+    stagingDesc.Height = _height;
+    stagingDesc.MipLevels = 1;
+    stagingDesc.ArraySize = 1;
+    stagingDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    stagingDesc.SampleDesc.Count = 1;
+    stagingDesc.Usage = D3D11_USAGE_STAGING;
+    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+    RETURN_IF_FAILED(
+        _device->CreateTexture2D(
+            &stagingDesc,
+            nullptr,
+            &_stagingTexture
+        )
+    );
+
+    return S_OK;
 }
 
-void AsciiEngine::Process(BYTE* yPlane, UINT stride) const
+HRESULT AsciiEngine::Process(
+    const BYTE* yPlane,
+    LONG pitch
+)
 {
-    if (yPlane == nullptr || _width == 0 || _height == 0 || stride < _width)
-        return;
-
-    BITMAPINFO bitmapInfo = {};
-    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(_width);
-    bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(_height); // top-down
-    bitmapInfo.bmiHeader.biPlanes = 1;
-    bitmapInfo.bmiHeader.biBitCount = 32;
-    bitmapInfo.bmiHeader.biCompression = BI_RGB;
-
-    void* dibPixels = nullptr;
-    HBITMAP bitmap = CreateDIBSection(nullptr, &bitmapInfo, DIB_RGB_COLORS,
-        &dibPixels, nullptr, 0);
-    HDC dc = bitmap ? CreateCompatibleDC(nullptr) : nullptr;
-    if (!bitmap || !dc || !dibPixels)
+    if (!_inputTexture ||
+        !_inputSRV ||
+        !_outputTexture ||
+        !_outputUAV ||
+        !_stagingTexture ||
+        !_context ||
+        !_computeShader ||
+        !yPlane)
     {
-        if (dc) DeleteDC(dc);
-        if (bitmap) DeleteObject(bitmap);
-        return;
+        return E_FAIL;
     }
 
-    HGDIOBJ oldBitmap = SelectObject(dc, bitmap);
-    const size_t pixelCount = static_cast<size_t>(_width) * _height;
-    DWORD* pixels = static_cast<DWORD*>(dibPixels);
-    std::fill_n(pixels, pixelCount, 0);
-    // A top-down 32-bit DIB stores each pixel as blue, green, red, alpha.
-    // GDI writes directly to this buffer while drawing the selected glyphs.
-    for (UINT y = 0; y < _height;)
+    D3D11_MAPPED_SUBRESOURCE mappedInput = {};
+
+    RETURN_IF_FAILED(
+        _context->Map(
+            _inputTexture.get(),
+            0,
+            D3D11_MAP_WRITE_DISCARD,
+            0,
+            &mappedInput
+        )
+    );
+
+    const BYTE* srcRow = yPlane;
+    BYTE* dstRow = static_cast<BYTE*>(mappedInput.pData);
+
+    for (UINT y = 0; y < _height; ++y)
     {
-        const UINT cellHeight = (_height - y < CELL_HEIGHT) ? _height - y : CELL_HEIGHT;
-        const UINT yEnd = y + cellHeight;
+        memcpy(dstRow, srcRow, _width);
+        srcRow += pitch;
+        dstRow += mappedInput.RowPitch;
+    }
 
-        for (UINT x = 0; x < _width;)
+    _context->Unmap(
+        _inputTexture.get(),
+        0
+    );
+
+    _context->CSSetShader(
+        _computeShader.get(),
+        nullptr,
+        0
+    );
+
+    ID3D11ShaderResourceView* srvs[] =
+    {
+        _inputSRV.get()
+    };
+
+    _context->CSSetShaderResources(
+        0,
+        1,
+        srvs
+    );
+
+    ID3D11UnorderedAccessView* uavs[] =
+    {
+        _outputUAV.get()
+    };
+
+    _context->CSSetUnorderedAccessViews(
+        0,
+        1,
+        uavs,
+        nullptr
+    );
+
+    const UINT dispatchX = (_width + 7) / 8;
+    const UINT dispatchY = (_height + 7) / 8;
+
+    _context->Dispatch(
+        dispatchX,
+        dispatchY,
+        1
+    );
+
+    ID3D11ShaderResourceView* nullSRV = nullptr;
+    _context->CSSetShaderResources(0, 1, &nullSRV);
+
+    ID3D11UnorderedAccessView* nullUAV = nullptr;
+    _context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+
+    _context->CopyResource(
+        _stagingTexture.get(),
+        _outputTexture.get()
+    );
+
+    D3D11_MAPPED_SUBRESOURCE mappedStaging = {};
+
+    RETURN_IF_FAILED(
+        _context->Map(
+            _stagingTexture.get(),
+            0,
+            D3D11_MAP_READ,
+            0,
+            &mappedStaging
+        )
+    );
+
+    const BYTE* srcResultRow = static_cast<const BYTE*>(mappedStaging.pData);
+    BYTE* dstResultRow = const_cast<BYTE*>(yPlane);
+
+    for (UINT y = 0; y < _height; ++y)
+    {
+        const BYTE* srcPixel = srcResultRow;
+        BYTE* dstPixel = dstResultRow;
+
+        for (UINT x = 0; x < _width; ++x)
         {
-            const UINT cellWidth = (_width - x < CELL_WIDTH) ? _width - x : CELL_WIDTH;
-            const UINT xEnd = x + cellWidth;
-            UINT sum = 0;
-            UINT count = 0;
-
-            // Read the full block before writing so each output value is based
-            // on the original luminance values in that block.
-            for (UINT py = y; py < yEnd; ++py)
-            {
-                const BYTE* row = yPlane + static_cast<size_t>(py) * stride;
-                for (UINT px = x; px < xEnd; ++px)
-                {
-                    sum += row[px];
-                    ++count;
-                }
-            }
-
-            const UINT average = sum / count;
-            const UINT levelIndex = average * (LEVEL_COUNT - 1) / 255;
-            const BYTE value = LEVELS[levelIndex];
-            const UINT charsetLength = static_cast<UINT>(sizeof(CHARSET) - 1);
-            // The charset runs from dense glyphs to sparse glyphs.
-            const UINT characterIndex =
-                (sum / count) * (charsetLength - 1) / 255;
-            const char character = CHARSET[characterIndex];
-
-            for (UINT py = y; py < yEnd; ++py)
-            {
-                BYTE* row = yPlane + static_cast<size_t>(py) * stride;
-                for (UINT px = x; px < xEnd; ++px)
-                    row[px] = value;
-            }
-            RECT cell = { static_cast<LONG>(x), static_cast<LONG>(y),
-                          static_cast<LONG>(xEnd), static_cast<LONG>(yEnd) };
-            FillRect(dc, &cell, static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-            SetTextColor(dc, RGB(255, 255, 255));
-            SetBkMode(dc, TRANSPARENT);
-            DrawTextA(dc, &character, 1, &cell,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-            x = xEnd;
+            dstPixel[x] = srcPixel[x * 4 + 0];
         }
 
-        y = yEnd;
+        srcResultRow += mappedStaging.RowPitch;
+        dstResultRow += pitch;
     }
 
-    // Convert the rendered monochrome glyph image back to the caller's Y plane.
-    for (UINT py = 0; py < _height; ++py)
-    {
-        BYTE* outputRow = yPlane + static_cast<size_t>(py) * stride;
-        const DWORD* inputRow = pixels + static_cast<size_t>(py) * _width;
-        for (UINT px = 0; px < _width; ++px)
-        {
-            const DWORD pixel = inputRow[px];
-            const BYTE blue = static_cast<BYTE>(pixel & 0xff);
-            const BYTE green = static_cast<BYTE>((pixel >> 8) & 0xff);
-            const BYTE red = static_cast<BYTE>((pixel >> 16) & 0xff);
-            outputRow[px] = static_cast<BYTE>((77 * red + 150 * green + 29 * blue) >> 8);
-        }
-    }
+    _context->Unmap(
+        _stagingTexture.get(),
+        0
+    );
 
-    SelectObject(dc, oldBitmap);
-    DeleteDC(dc);
-    DeleteObject(bitmap);
+    return S_OK;
+}
+
+void AsciiEngine::Shutdown()
+{
+    _computeShader.reset();
+    _stagingTexture.reset();
+    _outputUAV.reset();
+    _outputTexture.reset();
+    _inputSRV.reset();
+    _inputTexture.reset();
+    _context.reset();
+    _device.reset();
 }
