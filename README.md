@@ -48,7 +48,9 @@
 - [ ] Phase 3: Media Foundation 가상 카메라 DLL 구현 및 장치 등록
 - [ ] Phase 4: 사용자 제어 GUI 개발 및 안정성 테스트
 
+----
 
+1. 리팩토링 개요 (Context & Goal)기존 문제점: WebcamCapture에서 수신한 IMFSample을 CPU RAM으로 복사(Map/Unmap)하여 픽셀을 순회하므로, 병목(Stall)이 발생해 프레임 레이트가 저하됨(5~10 FPS).개선 목표: CPU RAM 복사를 완전히 제거하고 VRAM 내에서 MediaStream $\rightarrow$ WebcamCapture $\rightarrow$ PostProcessor $\rightarrow$ AsciiEngine $\rightarrow$ SwapChain 순으로 GPU 포인터(SRV)만 전달하는 Zero-Copy HLSL 셰이더 방식으로 전환(60+ FPS 달성).
 
 
 
