@@ -86,6 +86,8 @@ HRESULT MediaStream::Start(IMFMediaType* type)
 	UINT32 framerate = (fpsDenominator > 0) ? (fpsNumerator / fpsDenominator) : 30;
 	RETURN_IF_FAILED(_capture.Initialize(width, height, framerate));
 
+	RETURN_IF_FAILED(_postProcessor.Initialize(width, height, FilterOption::ASCII));
+
 	RETURN_IF_FAILED(
 		_allocator->InitializeSampleAllocator(
 			10,
@@ -104,6 +106,7 @@ HRESULT MediaStream::Start(IMFMediaType* type)
 	{
 		// 이벤트 발송 실패 시 롤백 처리
 		_state = MF_STREAM_STATE_STOPPED;
+		_postProcessor.Shutdown();
 		_capture.Shutdown();
 		return hr;
 	}
@@ -165,8 +168,12 @@ void MediaStream::CaptureLoop(std::stop_token stopToken)
 			continue;
 		}
 
-		// (필요 시) 후처리 단계
-		// _postProcessor.Process(webcamSample.get(), &processedSample);
+		hr = _postProcessor.Process(webcamSample.get());
+		if (FAILED(hr))
+		{
+			WINTRACE(L"Filter Process Failed: 0x%08X", hr);
+			continue;
+		}
 
 		// 최신 프레임 스레드 안전 업데이트
 		{

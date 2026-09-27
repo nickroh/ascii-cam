@@ -3,6 +3,7 @@
 #include "WebCamCapture.h"
 #include "ColorConverter.h"
 #include "FrameGenerator.h"
+#include "Filter.h"
 #include <winerror.h>
 #include <mferror.h>
 #include <thread>
@@ -147,6 +148,8 @@ private:
     ColorConverter _converter;
     // capture thread
     std::jthread _captureThread;
+
+    Filter _postProcessor;
 
     // latest webcam frame
     wil::com_ptr_nothrow<IMFSample> _latestFrame;
