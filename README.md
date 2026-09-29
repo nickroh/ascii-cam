@@ -1,57 +1,50 @@
-# 🎥 ASCII-Cam
+# ASCII-Cam
 
-**Language:** [한국어](README.md) | [English](README.eng.md)
+**언어:** [한국어](README.md) | [English](README.eng.md)
 
-> **Windows Media Foundation 기반의 경량 가상 웹캠 아스키 아트 필터**
+Windows Media Foundation으로 실제 웹캠 영상을 ASCII 필터로 처리해 소프트웨어 가상 카메라로 제공하는 C++ 프로젝트입니다.
 
-`ASCII-Cam Flow`는 노트북의 실제 웹캠 영상을 실시간으로 분석하여 아스키 아트(ASCII Art) 이미지로 변환하고, 이를 시스템 가상 카메라 장치로 송출하는 프로젝트입니다. **Media Foundation** 표준을 사용하여 최신 Windows 환경에서 높은 호환성과 성능을 유지합니다.
+## 현재 구현
 
----
+- `ascii-cam-source`: Media Foundation 소프트웨어 카메라 DLL입니다. `IMFMediaSource`/`IMFMediaStream`을 제공하고, Source Reader로 실제 웹캠을 캡처합니다.
+- `ascii-cam`: 웹캠 캡처와 Media Foundation 샘플 처리를 확인하는 콘솔 테스트 프로젝트입니다.
+- 필터는 `FilterOption::ASCII`로 초기화되며, CPU 경로와 Direct3D 11/DXGI 기반 경로를 지원합니다.
+- 출력 미디어 형식은 RGB32와 NV12이고 기본 스트림 형식은 1280x720, 30 FPS입니다.
 
-## 🛠 테크 스택 (Tech Stack)
-* **언어:** C++ 20
-* **이미지 처리:** OpenCV 4.x
-* **시스템 API:** Windows Media Foundation (MF), Win32 API
-* **IPC (프로세스 간 통신):** Named Shared Memory (Memory Mapped Files)
-* **IDE:** Visual Studio 2022 / Windows SDK
+현재 저장소에는 GUI, OpenCV 기반 실행 경로, Named Shared Memory 기반 프레임 전달, HLSL 셰이더 구현이 포함되어 있지 않습니다. `SharedMemory`와 일부 OpenCV 코드는 이전 실험용 코드로 남아 있지만 활성 경로가 아닙니다.
 
----
+## 요구 사항
 
-## 🏗 시스템 아키텍처 (Architecture)
+- Windows 10 이상
+- Visual Studio 2022
+- Windows 10/11 SDK 및 C++ 데스크톱 개발 도구
+- Media Foundation, Direct3D 11, Direct2D, DirectWrite 지원 환경
 
-본 프로젝트는 성능 최적화와 안정성을 위해 **Provider**와 **Proxy**가 분리된 하이브리드 구조를 채택합니다.
+## 빌드
 
-1. **ASCII Provider (실행 파일):**
-   - 실제 하드웨어 웹캠에서 데이터를 획득합니다.
-   - OpenCV를 이용한 Gray-scale 변환 및 밝기 데이터 추출.
-   - 픽셀 데이터를 아스키 문자 이미지 프레임으로 렌더링.
-   - 공유 메모리에 비트맵 데이터를 기록.
+Visual Studio에서 각 솔루션을 열고 `Release | x64` 구성을 선택해 빌드합니다.
 
-2. **MF Device Proxy (DLL 드라이버):**
-   - `IMFDeviceTransform` 인터페이스를 구현한 유저 모드 드라이버.
-   - 공유 메모리에서 데이터를 읽어 시스템 미디어 스택으로 전송.
-   - 디스코드, 줌 등에서 표준 웹캠으로 인식.
+1. `ascii-cam-source/ascii-cam.sln`을 빌드해 가상 카메라 DLL을 만듭니다.
+2. `ascii-cam/ascii-cam/ascii-cam.sln`을 빌드해 캡처 테스트 실행 파일을 만듭니다.
 
----
+두 솔루션은 서로 다른 프로젝트이며, 현재 Linux 환경에서는 Windows 전용 코드를 빌드할 수 없습니다.
 
-## 🚀 주요 기능 (Key Features)
-* **Zero-Driver Installation:** 커널 드라이버 서명 없이 유저 모드에서 안전하게 작동.
-* **High Performance:** 공유 메모리를 통한 초고속 데이터 전송으로 지연 시간(Latency) 최소화.
-* **Live Control:** 전용 컨트롤러를 통해 아스키 모드 On/Off 및 필터 강도 실시간 조절.
-* **Lightweight:** 최소한의 자원을 사용하여 시스템 부하 방지.
+## DLL 등록
 
----
+관리자 권한 명령 프롬프트에서 빌드된 DLL에 `regsvr32`를 실행합니다.
 
-## 📅 프로젝트 로드맵 (Roadmap)
-- [ ] Phase 1: OpenCV 기반 웹캠 캡처 및 아스키 변환 알고리즘 최적화
-- [ ] Phase 2: Win32 공유 메모리(IPC) 인터페이스 구축
-- [ ] Phase 3: Media Foundation 가상 카메라 DLL 구현 및 장치 등록
-- [ ] Phase 4: 사용자 제어 GUI 개발 및 안정성 테스트
+```bat
+regsvr32 path\to\ascii-cam.dll
+```
 
-----
+등록 해제는 다음과 같습니다.
 
-1. 리팩토링 개요 (Context & Goal)기존 문제점: WebcamCapture에서 수신한 IMFSample을 CPU RAM으로 복사(Map/Unmap)하여 픽셀을 순회하므로, 병목(Stall)이 발생해 프레임 레이트가 저하됨(5~10 FPS).개선 목표: CPU RAM 복사를 완전히 제거하고 VRAM 내에서 MediaStream $\rightarrow$ WebcamCapture $\rightarrow$ PostProcessor $\rightarrow$ AsciiEngine $\rightarrow$ SwapChain 순으로 GPU 포인터(SRV)만 전달하는 Zero-Copy HLSL 셰이더 방식으로 전환(60+ FPS 달성).
+```bat
+regsvr32 /u path\to\ascii-cam.dll
+```
 
+DLL은 `HKLM`에 등록되므로 등록과 해제에 관리자 권한이 필요합니다. 등록 후 Discord, Zoom 등 Media Foundation 카메라를 사용하는 애플리케이션에서 장치를 선택할 수 있습니다.
 
+## 상태
 
-net start FrameServer
+핵심 캡처, ASCII 필터, 소프트웨어 카메라 등록 경로가 구현되어 있습니다. 사용자 인터페이스, 설치 패키지, 자동화된 Windows 테스트, 성능 목표 검증은 아직 남아 있습니다.

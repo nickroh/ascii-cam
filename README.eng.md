@@ -1,49 +1,50 @@
-# 🎥 ASCII-Cam
+# ASCII-Cam
 
 **Language:** [한국어](README.md) | [English](README.eng.md)
 
-> **Lightweight Virtual Webcam ASCII Art Filter Based on Windows Media Foundation**
+A C++ project that captures a physical webcam through Windows Media Foundation, applies an ASCII filter, and exposes the result as a software virtual camera.
 
-`ASCII-Cam Flow` is a project that analyzes real webcam footage from your notebook in real-time, converts it to ASCII Art images, and outputs it through a system virtual camera device. Using the **Media Foundation** standard, it maintains high compatibility and performance in modern Windows environments.
+## Current implementation
 
----
+- `ascii-cam-source` is the Media Foundation software-camera DLL. It provides an `IMFMediaSource`/`IMFMediaStream` and captures a physical webcam with a Source Reader.
+- `ascii-cam` is a console test project for webcam capture and Media Foundation sample processing.
+- The stream initializes the filter with `FilterOption::ASCII` and supports CPU and Direct3D 11/DXGI paths.
+- The supported output formats are RGB32 and NV12. The default stream format is 1280x720 at 30 FPS.
 
-## 🛠 Tech Stack
-* **Language:** C++ 20
-* **Image Processing:** OpenCV 4.x
-* **System API:** Windows Media Foundation (MF), Win32 API
-* **IPC (Inter-Process Communication):** Named Shared Memory (Memory Mapped Files)
-* **IDE:** Visual Studio 2022 / Windows SDK
+The repository does not currently contain a GUI, an active OpenCV execution path, Named Shared Memory frame transport, or an HLSL shader implementation. `SharedMemory` and some OpenCV code remain as inactive experimental code.
 
----
+## Requirements
 
-## 🏗 System Architecture
+- Windows 10 or later
+- Visual Studio 2022
+- Windows 10/11 SDK and the Desktop development with C++ workload
+- A system with Media Foundation, Direct3D 11, Direct2D, and DirectWrite support
 
-This project adopts a hybrid architecture with separated **Provider** and **Proxy** for performance optimization and stability.
+## Build
 
-1. **ASCII Provider (Executable):**
-   - Acquires data from actual hardware webcam.
-   - Grayscale conversion and brightness data extraction using OpenCV.
-   - Renders pixel data into ASCII character image frames.
-   - Writes bitmap data to shared memory.
+Open each solution in Visual Studio and build the `Release | x64` configuration.
 
-2. **MF Device Proxy (DLL Driver):**
-   - Implements `IMFDeviceTransform` interface as a user-mode driver.
-   - Reads data from shared memory and transmits it to the system media stack.
-   - Recognized as a standard webcam in Discord, Zoom, etc.
+1. Build `ascii-cam-source/ascii-cam.sln` to produce the virtual-camera DLL.
+2. Build `ascii-cam/ascii-cam/ascii-cam.sln` to produce the capture test executable.
 
----
+These are separate projects. The Windows-specific code cannot be built in the current Linux environment.
 
-## 🚀 Key Features
-* **Zero-Driver Installation:** Operates safely in user-mode without kernel driver signing.
-* **High Performance:** Minimizes latency through ultra-fast data transmission via shared memory.
-* **Live Control:** Toggle ASCII mode On/Off and adjust filter intensity in real-time through a dedicated controller.
-* **Lightweight:** Prevents system load by using minimal resources.
+## Register the DLL
 
----
+Run `regsvr32` for the built DLL from an elevated Command Prompt:
 
-## 📅 Project Roadmap
-- [ ] Phase 1: Optimize OpenCV-based webcam capture and ASCII conversion algorithm
-- [ ] Phase 2: Build Win32 shared memory (IPC) interface
-- [ ] Phase 3: Implement Media Foundation virtual camera DLL and device registration
-- [ ] Phase 4: Develop user control GUI and stability testing
+```bat
+regsvr32 path\to\ascii-cam.dll
+```
+
+To unregister it:
+
+```bat
+regsvr32 /u path\to\ascii-cam.dll
+```
+
+The DLL is registered under `HKLM`, so registration and unregistration require administrator privileges. After registration, select the camera from applications that use Media Foundation cameras, such as Discord or Zoom.
+
+## Status
+
+The core capture, ASCII filter, and software-camera registration paths are implemented. A user interface, installer, automated Windows tests, and validated performance targets are still pending.
