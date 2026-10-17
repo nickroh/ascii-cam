@@ -18,11 +18,14 @@ class Filter
 public:
     Filter();
     ~Filter();
-    HRESULT Initialize(UINT width, UINT height, FilterOption option);
+    HRESULT Initialize(UINT width, UINT height, FilterOption option, IMFMediaType* inputType = nullptr);
     HRESULT Process(IMFSample* sample);
     void Shutdown();
 
 private:
+    HRESULT ProcessGrayscale(BYTE* data, DWORD length, UINT stride) const;
+    GUID _inputFormat = GUID_NULL;
+    UINT _stride = 0;
     UINT _width = 0;
     UINT _height = 0;
     FilterOption _option = FilterOption::Passthrough;
