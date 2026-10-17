@@ -20,6 +20,14 @@ public:
 
     HRESULT GetFrame(IMFSample** sample);
 
+    HRESULT GetOutputType(IMFMediaType** type)
+    {
+        if (!type) return E_POINTER;
+        *type = nullptr;
+        if (!_reader) return E_UNEXPECTED;
+        return _reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, type);
+    }
+
     void Shutdown();
 
 private:
