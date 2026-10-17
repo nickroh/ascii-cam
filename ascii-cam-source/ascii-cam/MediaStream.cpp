@@ -86,7 +86,9 @@ HRESULT MediaStream::Start(IMFMediaType* type)
 	UINT32 framerate = (fpsDenominator > 0) ? (fpsNumerator / fpsDenominator) : 30;
 	RETURN_IF_FAILED(_capture.Initialize(width, height, framerate));
 
-	RETURN_IF_FAILED(_postProcessor.Initialize(width, height, FilterOption::ASCII));
+	wil::com_ptr_nothrow<IMFMediaType> captureType;
+    RETURN_IF_FAILED(_capture.GetOutputType(&captureType));
+    RETURN_IF_FAILED(_postProcessor.Initialize(width, height, FilterOption::Grayscale, captureType.get()));
 
 	RETURN_IF_FAILED(
 		_allocator->InitializeSampleAllocator(
