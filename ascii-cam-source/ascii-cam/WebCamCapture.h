@@ -20,13 +20,9 @@ public:
 
     HRESULT GetFrame(IMFSample** sample);
 
-    HRESULT GetOutputType(IMFMediaType** type)
-    {
-        if (!type) return E_POINTER;
-        *type = nullptr;
-        if (!_reader) return E_UNEXPECTED;
-        return _reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, type);
-    }
+    // GetOutputType removed: keep WebcamCapture interface minimal. Use
+    // post-processor Initialize(width, height, FilterOption::ASCII) in
+    // MediaStream instead of querying the capture output type here.
 
     void Shutdown();
 

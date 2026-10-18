@@ -123,7 +123,6 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="AsciiEngine.h" />
     <ClInclude Include="FrameEngine.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="SharedMemory.h" />
