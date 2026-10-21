@@ -1,5 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod shared_memory;
+
+use std::time::Duration;
+
 use eframe::egui::{
     self, pos2, vec2, Align2, Color32, FontId, RichText, Sense, Stroke, StrokeKind,
 };
@@ -31,6 +35,16 @@ impl Filter {
         }
     }
 
+    /// FilterOption value published through shared memory. Must match the C++ `FilterOption`:
+    /// `0 = Passthrough, 1 = ASCII, 2 = Edge, 3 = Grayscale`.
+    fn wire_value(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Ascii => 1,
+            Self::Grayscale => 3,
+        }
+    }
+
     fn description(self) -> &'static str {
         match self {
             Self::None => "Natural colors. No filter.",
@@ -40,12 +54,24 @@ impl Filter {
     }
 }
 
-// Preview state only: no camera APIs, subprocesses, DLLs or shared memory.
-#[derive(Default)]
+// Camera ON/OFF is still preview only. The selected filter is published through shared memory.
 struct CameraApp {
     enabled: bool,
     filter: Filter,
+    /// Last filter the consumer accepted (the publish succeeded).
+    published: Option<Filter>,
+    /// Filter whose publish failed with a non-retryable error; not retried until the user picks
+    /// another filter.
+    failed: Option<Filter>,
+    publisher: shared_memory::FilterPublisher,
+    /// Latest publish problem to show in the UI. `true` = still retrying, `false` = gave up.
+    status: Option<(bool, String)>,
 }
+
+/// How long one publish attempt waits for the consumer to acknowledge the previous value.
+/// Kept short so the UI thread never stalls; unacknowledged requests are retried later.
+const PUBLISH_TIMEOUT_MS: u32 = 50;
+const RETRY_INTERVAL: Duration = Duration::from_millis(200);
 
 impl CameraApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -65,7 +91,37 @@ impl CameraApp {
             .text_styles
             .insert(egui::TextStyle::Button, FontId::proportional(14.0));
         cc.egui_ctx.set_style(style);
-        Self::default()
+
+        Self {
+            enabled: false,
+            filter: Filter::default(),
+            published: None,
+            failed: None,
+            publisher: shared_memory::FilterPublisher::new(),
+            status: None,
+        }
+    }
+
+    /// Tries to hand the selected filter to the camera. A busy or not-yet-running consumer is
+    /// retried by `update`; any other error is shown and not retried.
+    fn publish_filter(&mut self, ctx: &egui::Context) {
+        match self
+            .publisher
+            .publish(self.filter.wire_value(), PUBLISH_TIMEOUT_MS)
+        {
+            Ok(()) => {
+                self.published = Some(self.filter);
+                self.status = None;
+            }
+            Err(e) if e.is_retryable() => {
+                self.status = Some((true, e.to_string()));
+                ctx.request_repaint_after(RETRY_INTERVAL);
+            }
+            Err(e) => {
+                self.failed = Some(self.filter);
+                self.status = Some((false, e.to_string()));
+            }
+        }
     }
 
     fn power_switch(&mut self, ui: &mut egui::Ui) {
@@ -203,6 +259,9 @@ impl CameraApp {
 
 impl eframe::App for CameraApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.published != Some(self.filter) && self.failed != Some(self.filter) {
+            self.publish_filter(ctx);
+        }
         egui::TopBottomPanel::top("accent")
             .exact_height(5.0)
             .frame(egui::Frame::new().fill(RED))
@@ -280,10 +339,26 @@ impl eframe::App for CameraApp {
                         ui.label(RichText::new(self.filter.label()).size(12.0).strong());
                     });
                     ui.label(
-                        RichText::new("Preview only. Camera is not connected.")
+                        RichText::new("Camera ON/OFF is preview only.")
                             .size(11.0)
                             .color(MUTED),
                     );
+                    match &self.status {
+                        Some((retrying, message)) => ui.label(
+                            RichText::new(message)
+                                .size(11.0)
+                                .color(if *retrying { MUTED } else { RED }),
+                        ),
+                        None => ui.label(
+                            RichText::new(match self.published {
+                                Some(filter) => format!("Sent: {}", filter.label()),
+                                None => "Not published yet".to_owned(),
+                            })
+                            .monospace()
+                            .size(11.0)
+                            .color(MUTED),
+                        ),
+                    };
                 });
             });
     }

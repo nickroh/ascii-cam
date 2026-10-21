@@ -4,6 +4,7 @@
 #include "ColorConverter.h"
 #include "FrameGenerator.h"
 #include "Filter.h"
+#include "FilterSubscriber.h"
 #include <winerror.h>
 #include <mferror.h>
 #include <thread>
@@ -150,6 +151,9 @@ private:
     std::jthread _captureThread;
 
     Filter _postProcessor;
+
+    // filter selection published by the controller through shared memory
+    FilterSubscriber _filterSubscriber;
 
     // latest webcam frame
     wil::com_ptr_nothrow<IMFSample> _latestFrame;

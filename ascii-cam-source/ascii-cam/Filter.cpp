@@ -14,16 +14,40 @@ HRESULT Filter::Initialize(UINT width, UINT height, FilterOption option)
 {
     _width = width;
     _height = height;
+
+    // Engines are sized for the previous resolution; recreate them on demand.
+    _asciiReady = false;
+    _grayscaleReady = false;
+
+    RETURN_IF_FAILED(EnsureEngine(option));
     _option = option;
 
-    if (_option == FilterOption::Grayscale)
+    return S_OK;
+}
+
+HRESULT Filter::SetOption(FilterOption option)
+{
+    if (option == _option)
+        return S_OK;
+
+    RETURN_IF_FAILED(EnsureEngine(option));
+    _option = option;
+
+    return S_OK;
+}
+
+HRESULT Filter::EnsureEngine(FilterOption option)
+{
+    if (option == FilterOption::Grayscale && !_grayscaleReady)
     {
         RETURN_IF_FAILED(_grayscale.Initialize(_width, _height));
+        _grayscaleReady = true;
     }
 
-    if (_option == FilterOption::ASCII)
+    if (option == FilterOption::ASCII && !_asciiReady)
     {
-        _ascii.Initialize(_width, _height);
+        RETURN_IF_FAILED(_ascii.Initialize(_width, _height));
+        _asciiReady = true;
     }
 
     return S_OK;
@@ -96,4 +120,6 @@ void Filter::Shutdown()
 {
     _ascii.Shutdown();
     _grayscale.Shutdown();
+    _asciiReady = false;
+    _grayscaleReady = false;
 }
