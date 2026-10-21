@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <mfidl.h>
 #include <cstdint>
+
 #include "AsciiEngine.h"
 #include "GrayscaleEngine.h"
 
@@ -17,10 +18,11 @@ enum class FilterOption : uint8_t
 class Filter
 {
 public:
-    Filter();
-    ~Filter();
+    Filter() = default;
+    ~Filter() { Shutdown(); }
 
     HRESULT Initialize(UINT width, UINT height, FilterOption option);
+    HRESULT SetFilterOption(FilterOption option);
     HRESULT Process(IMFSample* sample);
     void Shutdown();
 
@@ -31,4 +33,7 @@ private:
 
     AsciiEngine _ascii;
     GrayscaleEngine _grayscale;
+
+    bool _asciiReady = false;
+    bool _grayReady = false;
 };

@@ -1,66 +1,11 @@
 #include "pch.h"
 #include "AsciiEngine.h"
+#include "ShaderPath.h"
+
 #include <d3dcompiler.h>
+#include <cstring>
 
 #pragma comment(lib, "d3dcompiler.lib")
-
-static const char* g_AsciiComputeShaderHLSL = R"(
-Texture2D<float> inputTex : register(t0);
-RWTexture2D<float4> outputTex : register(u0);
-
-static const uint CHAR_WIDTH = 8;
-static const uint CHAR_HEIGHT = 16;
-static const uint CHAR_COUNT = 10;
-
-static const uint glyphs[CHAR_COUNT][CHAR_HEIGHT] =
-{
-    { 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0 },                               // space
-    { 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0x18,0x18 },                         // .
-    { 0,0,0,0,0,0,0,0, 0x18,0x18,0,0,0,0x18,0x18,0 },                   // :
-    { 0,0,0,0,0,0,0,0, 0,0x7E,0x7E,0,0,0,0,0 },                         // -
-    { 0,0,0,0,0,0,0x7E,0x7E, 0,0,0x7E,0x7E,0,0,0,0 },                   // =
-    { 0,0,0,0,0,0x18,0x18,0x18, 0x7E,0x7E,0x18,0x18,0x18,0,0,0 },       // +
-    { 0,0,0,0,0,0x18,0x18,0x5A, 0x3C,0x3C,0x5A,0x18,0x18,0,0,0 },       // *
-    { 0,0,0,0x24,0x24,0x7E,0x7E,0x24, 0x24,0x7E,0x7E,0x24,0x24,0,0,0 }, // #
-    { 0,0,0,0x62,0x62,0x64,0x08,0x10, 0x20,0x4C,0x8C,0x8C,0,0,0,0 },     // %
-    { 0,0,0,0x3C,0x42,0x99,0xA5,0xA5, 0x9D,0x40,0x3C,0x3C,0,0,0,0 }      // @
-};
-
-[numthreads(8, 8, 1)]
-void main(uint3 dtid : SV_DispatchThreadID)
-{
-    uint width, height;
-    inputTex.GetDimensions(width, height);
-
-    uint2 pos = dtid.xy;
-    if (pos.x >= width || pos.y >= height) return;
-
-    uint2 cellStart = (pos / uint2(CHAR_WIDTH, CHAR_HEIGHT)) * uint2(CHAR_WIDTH, CHAR_HEIGHT);
-    uint2 cellEnd = min(cellStart + uint2(CHAR_WIDTH, CHAR_HEIGHT), uint2(width, height));
-
-    float lumSum = 0.0f;
-    uint count = 0;
-    
-    for (uint y = cellStart.y; y < cellEnd.y; ++y)
-    {
-        for (uint x = cellStart.x; x < cellEnd.x; ++x)
-        {
-            lumSum += inputTex.Load(int3(x, y, 0)); 
-            ++count;
-        }
-    }
-
-    float luminance = lumSum / max((float)count, 1.0f);
-    float tone = pow(saturate(luminance), 0.82f);
-    uint glyphIndex = min((uint)floor(tone * (CHAR_COUNT - 1) + 0.5f), CHAR_COUNT - 1);
-
-    uint2 local = pos - cellStart;
-    uint rowBits = glyphs[glyphIndex][local.y];
-    bool ink = ((rowBits >> (7 - local.x)) & 1) != 0;
-
-    outputTex[pos] = ink ? float4(1.0f, 1.0f, 1.0f, 1.0f) : float4(0.0f, 0.0f, 0.0f, 1.0f);
-}
-)";
 
 AsciiEngine::~AsciiEngine()
 {
@@ -69,6 +14,8 @@ AsciiEngine::~AsciiEngine()
 
 HRESULT AsciiEngine::Initialize(UINT width, UINT height)
 {
+    Shutdown();
+
     _width = width;
     _height = height;
 
@@ -83,7 +30,7 @@ HRESULT AsciiEngine::Initialize(UINT width, UINT height)
         D3D_FEATURE_LEVEL_11_0
     };
 
-    D3D_FEATURE_LEVEL outFeatureLevel;
+    D3D_FEATURE_LEVEL outFeatureLevel{};
 
     RETURN_IF_FAILED(
         D3D11CreateDevice(
@@ -100,15 +47,19 @@ HRESULT AsciiEngine::Initialize(UINT width, UINT height)
         )
     );
 
+    // Load external ASCII shader.
     wil::com_ptr_nothrow<ID3DBlob> shaderBlob;
     wil::com_ptr_nothrow<ID3DBlob> errorBlob;
 
-    HRESULT hr = D3DCompile(
-        g_AsciiComputeShaderHLSL,
-        strlen(g_AsciiComputeShaderHLSL),
-        "AsciiCS",
+    std::wstring shaderPath = GetShaderPath(L"AsciiShader.hlsl");
+
+    if (shaderPath.empty())
+        return E_FAIL;
+
+    HRESULT hr = D3DCompileFromFile(
+        shaderPath.c_str(),
         nullptr,
-        nullptr,
+        D3D_COMPILE_STANDARD_FILE_INCLUDE,
         "main",
         "cs_5_0",
         0,
@@ -122,11 +73,10 @@ HRESULT AsciiEngine::Initialize(UINT width, UINT height)
         if (errorBlob)
         {
             OutputDebugStringA(
-                static_cast<const char*>(
-                    errorBlob->GetBufferPointer()
-                    )
+                static_cast<const char*>(errorBlob->GetBufferPointer())
             );
         }
+
         return hr;
     }
 
@@ -139,7 +89,8 @@ HRESULT AsciiEngine::Initialize(UINT width, UINT height)
         )
     );
 
-    D3D11_TEXTURE2D_DESC inputDesc = {};
+    // Input texture: Y plane
+    D3D11_TEXTURE2D_DESC inputDesc{};
     inputDesc.Width = _width;
     inputDesc.Height = _height;
     inputDesc.MipLevels = 1;
@@ -166,7 +117,8 @@ HRESULT AsciiEngine::Initialize(UINT width, UINT height)
         )
     );
 
-    D3D11_TEXTURE2D_DESC outputDesc = {};
+    // Shader output texture
+    D3D11_TEXTURE2D_DESC outputDesc{};
     outputDesc.Width = _width;
     outputDesc.Height = _height;
     outputDesc.MipLevels = 1;
@@ -192,7 +144,8 @@ HRESULT AsciiEngine::Initialize(UINT width, UINT height)
         )
     );
 
-    D3D11_TEXTURE2D_DESC stagingDesc = {};
+    // GPU-to-CPU staging texture
+    D3D11_TEXTURE2D_DESC stagingDesc{};
     stagingDesc.Width = _width;
     stagingDesc.Height = _height;
     stagingDesc.MipLevels = 1;
@@ -213,10 +166,7 @@ HRESULT AsciiEngine::Initialize(UINT width, UINT height)
     return S_OK;
 }
 
-HRESULT AsciiEngine::Process(
-    const BYTE* yPlane,
-    LONG pitch
-)
+HRESULT AsciiEngine::Process(const BYTE* yPlane, LONG pitch)
 {
     if (!_inputTexture ||
         !_inputSRV ||
@@ -230,7 +180,8 @@ HRESULT AsciiEngine::Process(
         return E_FAIL;
     }
 
-    D3D11_MAPPED_SUBRESOURCE mappedInput = {};
+    // Upload Y plane to GPU.
+    D3D11_MAPPED_SUBRESOURCE mappedInput{};
 
     RETURN_IF_FAILED(
         _context->Map(
@@ -252,11 +203,9 @@ HRESULT AsciiEngine::Process(
         dstRow += mappedInput.RowPitch;
     }
 
-    _context->Unmap(
-        _inputTexture.get(),
-        0
-    );
+    _context->Unmap(_inputTexture.get(), 0);
 
+    // Execute ASCII compute shader.
     _context->CSSetShader(
         _computeShader.get(),
         nullptr,
@@ -268,11 +217,7 @@ HRESULT AsciiEngine::Process(
         _inputSRV.get()
     };
 
-    _context->CSSetShaderResources(
-        0,
-        1,
-        srvs
-    );
+    _context->CSSetShaderResources(0, 1, srvs);
 
     ID3D11UnorderedAccessView* uavs[] =
     {
@@ -286,27 +231,31 @@ HRESULT AsciiEngine::Process(
         nullptr
     );
 
-    const UINT dispatchX = (_width + 7) / 8;
-    const UINT dispatchY = (_height + 7) / 8;
-
     _context->Dispatch(
-        dispatchX,
-        dispatchY,
+        (_width + 7) / 8,
+        (_height + 7) / 8,
         1
     );
 
+    // Unbind shader resources.
     ID3D11ShaderResourceView* nullSRV = nullptr;
     _context->CSSetShaderResources(0, 1, &nullSRV);
 
     ID3D11UnorderedAccessView* nullUAV = nullptr;
-    _context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+    _context->CSSetUnorderedAccessViews(
+        0,
+        1,
+        &nullUAV,
+        nullptr
+    );
 
+    // Copy GPU output to CPU-readable texture.
     _context->CopyResource(
         _stagingTexture.get(),
         _outputTexture.get()
     );
 
-    D3D11_MAPPED_SUBRESOURCE mappedStaging = {};
+    D3D11_MAPPED_SUBRESOURCE mappedStaging{};
 
     RETURN_IF_FAILED(
         _context->Map(
@@ -318,9 +267,12 @@ HRESULT AsciiEngine::Process(
         )
     );
 
-    const BYTE* srcResultRow = static_cast<const BYTE*>(mappedStaging.pData);
+    const BYTE* srcResultRow =
+        static_cast<const BYTE*>(mappedStaging.pData);
+
     BYTE* dstResultRow = const_cast<BYTE*>(yPlane);
 
+    // Write ASCII luminance back into the Y plane.
     for (UINT y = 0; y < _height; ++y)
     {
         const BYTE* srcPixel = srcResultRow;
@@ -328,17 +280,14 @@ HRESULT AsciiEngine::Process(
 
         for (UINT x = 0; x < _width; ++x)
         {
-            dstPixel[x] = srcPixel[x * 4 + 0];
+            dstPixel[x] = srcPixel[x * 4];
         }
 
         srcResultRow += mappedStaging.RowPitch;
         dstResultRow += pitch;
     }
 
-    _context->Unmap(
-        _stagingTexture.get(),
-        0
-    );
+    _context->Unmap(_stagingTexture.get(), 0);
 
     return S_OK;
 }

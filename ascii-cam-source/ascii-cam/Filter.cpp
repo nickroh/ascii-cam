@@ -1,31 +1,50 @@
 #include "pch.h"
 #include "Filter.h"
 
-Filter::Filter()
-{
-}
-
-Filter::~Filter()
-{
-    Shutdown();
-}
-
 HRESULT Filter::Initialize(UINT width, UINT height, FilterOption option)
 {
+    Shutdown();
+
+    if (!width || !height)
+        return E_INVALIDARG;
+
     _width = width;
     _height = height;
+
+    return SetFilterOption(option);
+}
+
+HRESULT Filter::SetFilterOption(FilterOption option)
+{
+    if (!_width || !_height)
+        return MF_E_NOT_INITIALIZED;
+
+    switch (option)
+    {
+    case FilterOption::ASCII:
+        if (!_asciiReady)
+        {
+            RETURN_IF_FAILED(_ascii.Initialize(_width, _height));
+            _asciiReady = true;
+        }
+        break;
+
+    case FilterOption::Grayscale:
+        if (!_grayReady)
+        {
+            RETURN_IF_FAILED(_grayscale.Initialize(_width, _height));
+            _grayReady = true;
+        }
+        break;
+
+    case FilterOption::Passthrough:
+        break;
+
+    default:
+        return E_NOTIMPL;
+    }
+
     _option = option;
-
-    if (_option == FilterOption::Grayscale)
-    {
-        RETURN_IF_FAILED(_grayscale.Initialize(_width, _height));
-    }
-
-    if (_option == FilterOption::ASCII)
-    {
-        _ascii.Initialize(_width, _height);
-    }
-
     return S_OK;
 }
 
@@ -35,6 +54,12 @@ HRESULT Filter::Process(IMFSample* sample)
 
     if (_option == FilterOption::Passthrough)
         return S_OK;
+
+    if (_option == FilterOption::Grayscale)
+        return _grayscale.Process(sample);
+
+    if (_option != FilterOption::ASCII)
+        return E_NOTIMPL;
 
     wil::com_ptr_nothrow<IMFMediaBuffer> buffer;
     RETURN_IF_FAILED(sample->GetBufferByIndex(0, &buffer));
@@ -47,53 +72,30 @@ HRESULT Filter::Process(IMFSample* sample)
         LONG pitch = 0;
 
         RETURN_IF_FAILED(buffer2D->Lock2D(&data, &pitch));
-
-        HRESULT hr = S_OK;
-
-        if (_option == FilterOption::ASCII)
-        {
-            hr = _ascii.Process(data, pitch);
-        }
-        else if (_option == FilterOption::Grayscale)
-        {
-            hr = _grayscale.Process(data, pitch);
-        }
-
+        HRESULT hr = _ascii.Process(data, pitch);
         HRESULT unlockHr = buffer2D->Unlock2D();
 
-        RETURN_IF_FAILED(hr);
-        RETURN_IF_FAILED(unlockHr);
-
-        return S_OK;
+        return FAILED(hr) ? hr : unlockHr;
     }
 
     BYTE* data = nullptr;
-    DWORD maxLength = 0;
-    DWORD currentLength = 0;
+    DWORD maxLength = 0, currentLength = 0;
 
     RETURN_IF_FAILED(buffer->Lock(&data, &maxLength, &currentLength));
 
-    HRESULT hr = S_OK;
-
-    if (_option == FilterOption::ASCII)
-    {
-        hr = _ascii.Process(data, static_cast<LONG>(_width));
-    }
-    else if (_option == FilterOption::Grayscale)
-    {
-        hr = _grayscale.Process(data, static_cast<LONG>(_width));
-    }
-
+    HRESULT hr = _ascii.Process(data, static_cast<LONG>(_width));
     HRESULT unlockHr = buffer->Unlock();
 
-    RETURN_IF_FAILED(hr);
-    RETURN_IF_FAILED(unlockHr);
-
-    return S_OK;
+    return FAILED(hr) ? hr : unlockHr;
 }
 
 void Filter::Shutdown()
 {
     _ascii.Shutdown();
     _grayscale.Shutdown();
+
+    _asciiReady = false;
+    _grayReady = false;
+    _option = FilterOption::Passthrough;
+    _width = _height = 0;
 }
