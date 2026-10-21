@@ -86,9 +86,7 @@ HRESULT MediaStream::Start(IMFMediaType* type)
 	UINT32 framerate = (fpsDenominator > 0) ? (fpsNumerator / fpsDenominator) : 30;
 	RETURN_IF_FAILED(_capture.Initialize(width, height, framerate));
 
-	wil::com_ptr_nothrow<IMFMediaType> captureType;
-    RETURN_IF_FAILED(_capture.GetOutputType(&captureType));
-    RETURN_IF_FAILED(_postProcessor.Initialize(width, height, FilterOption::Grayscale, captureType.get()));
+	RETURN_IF_FAILED(_postProcessor.Initialize(width, height, FilterOption::Grayscale));
 
 	RETURN_IF_FAILED(
 		_allocator->InitializeSampleAllocator(
@@ -168,6 +166,15 @@ void MediaStream::CaptureLoop(std::stop_token stopToken)
 			}
 
 			continue;
+		}
+
+		FilterOption requested;
+		if (_filterSubscriber.TryGetUpdate(requested))
+		{
+			HRESULT setHr = _postProcessor.SetOption(requested);
+			WINTRACE(L"Filter switched to %d: 0x%08X", (int)requested, setHr);
+			// Acknowledge only after the switch finished (even on failure, so the producer unblocks).
+			_filterSubscriber.NotifyConsumed();
 		}
 
 		hr = _postProcessor.Process(webcamSample.get());

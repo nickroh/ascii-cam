@@ -4,6 +4,7 @@
 #include <mfidl.h>
 #include <cstdint>
 #include "AsciiEngine.h"
+#include "GrayscaleEngine.h"
 
 enum class FilterOption : uint8_t
 {
@@ -18,17 +19,25 @@ class Filter
 public:
     Filter();
     ~Filter();
-    HRESULT Initialize(UINT width, UINT height, FilterOption option, IMFMediaType* inputType = nullptr);
+
+    HRESULT Initialize(UINT width, UINT height, FilterOption option);
+
+    // Switches the active filter at runtime, lazily creating the engine it needs.
+    // On failure the previous filter stays active. Call from the thread that calls Process.
+    HRESULT SetOption(FilterOption option);
     HRESULT Process(IMFSample* sample);
     void Shutdown();
 
 private:
-    HRESULT ProcessGrayscale(BYTE* data, DWORD length, UINT stride) const;
-    GUID _inputFormat = GUID_NULL;
-    UINT _stride = 0;
+    HRESULT EnsureEngine(FilterOption option);
+
     UINT _width = 0;
     UINT _height = 0;
     FilterOption _option = FilterOption::Passthrough;
 
+    bool _asciiReady = false;
+    bool _grayscaleReady = false;
+
     AsciiEngine _ascii;
+    GrayscaleEngine _grayscale;
 };
